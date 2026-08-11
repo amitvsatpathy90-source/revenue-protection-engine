@@ -1,0 +1,73 @@
+# DLT operational alert rules (ADR-23).
+#
+# Backs the depth gauges each service exposes for the DLTs it solely writes
+# (rpe.dlt.depth{topic=...} -> Prometheus rpe_dlt_depth). Thresholds encode the operational SLO:
+# a DLT is allowed to be briefly non-empty (transient poison), but a SUSTAINED or GROWING backlog
+# means events are being rejected faster than an operator is draining them, and a non-empty
+# *.parked topic means the re-drive tool gave up — a human must decide (decision tree in
+# docs/adrs/dlt-operations.md).
+#
+# `.parked` is matched with the [.] character class (literal dot) to avoid backslash escaping in YAML.
+# Lab note: these are synthetic-data thresholds; calibrate `for:` windows to real traffic in prod.
+groups:
+  - name: rpe-dlt
+    rules:
+      # A DLT (non-parked) holding records for 10m: poison/validation failures are not being drained.
+      - alert: RpeDltBacklog
+        expr: max by (topic) (rpe_dlt_depth{topic!~".+[.]parked"}) > 0
+        for: 10m
+        labels:
+          severity: warning
+          area: dlt
+        annotations:
+          summary: "DLT backlog on {{ $labels.topic }}"
+          description: >-
+            {{ $labels.topic }} has held {{ $value }} dead-lettered record(s) for >10m.
+            Triage per the decision tree, then drain with deploy/kafka/dlt-redrive.sh --dlt {{ $labels.topic }}.
+
+      # Actively growing (not merely stale): rejection rate currently exceeds drain rate.
+      - alert: RpeDltBacklogGrowing
+        expr: delta(rpe_dlt_depth{topic!~".+[.]parked"}[15m]) > 0
+        for: 15m
+        labels:
+          severity: warning
+          area: dlt
+        annotations:
+          summary: "DLT backlog growing on {{ $labels.topic }}"
+          description: >-
+            {{ $labels.topic }} grew by {{ $value }} record(s) over 15m — a systematic reject
+            (bad deploy, schema break, dependency down), not a one-off poison message. Find root
+            cause BEFORE re-driving; re-driving into an unfixed cause just re-fills the DLT.
+
+      # PAGE: re-drive exhausted its attempt cap and parked records. Manual fix-forward-or-discard.
+      - alert: RpeDltParked
+        expr: max by (topic) (rpe_dlt_depth{topic=~".+[.]parked"}) > 0
+        for: 0m
+        labels:
+          severity: critical
+          area: dlt
+        annotations:
+          summary: "Records parked on {{ $labels.topic }} — re-drive gave up"
+          description: >-
+            {{ $value }} record(s) re-poisoned past the re-drive attempt cap and were parked on
+            {{ $labels.topic }}. These will not move on their own. Decide per the decision tree:
+            fix-forward (correct the defect, then re-drive the parked topic) or discard.
+
+      # META-ALERT: the depth poller itself is failing (admin-client transport creds — ADR-20;
+      # missing DESCRIBE ACL on a *.parked topic — ADR-23; broker unreachable). The gauges above
+      # freeze at their last value (0 at boot = false-healthy), so every rule above is blind while
+      # this fires. Fix the poll first; treat all depth readings as stale until it clears.
+      # Threshold: polls run every 30s, so >5 failures in 10m = sustained breakage, not one blip.
+      - alert: RpeDltDepthPollFailing
+        expr: increase(rpe_dlt_depth_poll_failures_total[10m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          area: dlt
+        annotations:
+          summary: "DLT depth poll failing for {{ $labels.topic }}"
+          description: >-
+            rpe.dlt.depth for {{ $labels.topic }} has not refreshed for >10m — the gauge is frozen
+            at its last value (false-healthy; a 0 here does NOT mean the DLT is empty). First
+            suspects: admin-client transport creds (ADR-20) or a missing DESCRIBE ACL on the
+            .parked topic (ADR-23). RpeDltBacklog/RpeDltParked are blind until this clears.

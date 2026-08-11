@@ -1,0 +1,248 @@
+---
+# Prometheus — scrapes all four service actuator endpoints + OTel collector metrics.
+# Lab mode: 15s scrape, 24h retention, local emptyDir storage.
+# FROZEN (see ../README.md): exempt from scrape/rules parity — canonical configs are
+# ../../monitoring/*.yml (compose) and chaosforge-infra/observability/prometheus.yml (AWS).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: rpe
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    # DLT operational alerting (ADR-23) + Redis memory watermark (ADR-27).
+    # Co-mounted from this ConfigMap at /etc/prometheus/.
+    rule_files:
+      - /etc/prometheus/dlt.rules.yml
+      - /etc/prometheus/redis.rules.yml
+
+    scrape_configs:
+      # /actuator/prometheus is OAuth2-gated: hasAuthority("SCOPE_metrics:scrape") (ADR-19,
+      # ManagementSecurityConfig). A scrape with no bearer token is a 401, so the four service
+      # targets would sit DOWN even after an IdP is stood up — only otel-collector (unauthenticated)
+      # could ever be `up`. Each service job carries a bearer token; the token is a JWT bearing
+      # scope=metrics:scrape, mounted from the rpe-prometheus-scrape-token Secret (see below).
+      - job_name: rpe-detection
+        static_configs:
+          - targets: ['rpe-detection-service.rpe.svc.cluster.local:8080']
+        metrics_path: /actuator/prometheus
+        authorization:
+          type: Bearer
+          credentials_file: /etc/prometheus/scrape-token/token
+
+      - job_name: rpe-relay
+        static_configs:
+          - targets: ['rpe-relay-service.rpe.svc.cluster.local:8082']
+        metrics_path: /actuator/prometheus
+        authorization:
+          type: Bearer
+          credentials_file: /etc/prometheus/scrape-token/token
+
+      - job_name: rpe-alert
+        static_configs:
+          - targets: ['rpe-alert-service.rpe.svc.cluster.local:8083']
+        metrics_path: /actuator/prometheus
+        authorization:
+          type: Bearer
+          credentials_file: /etc/prometheus/scrape-token/token
+
+      - job_name: rpe-triage
+        static_configs:
+          - targets: ['rpe-triage-agent.rpe.svc.cluster.local:8081']
+        metrics_path: /actuator/prometheus
+        authorization:
+          type: Bearer
+          credentials_file: /etc/prometheus/scrape-token/token
+
+      # No auth block on purpose: the OTel collector's /metrics is unauthenticated (ADR-25).
+      - job_name: otel-collector
+        static_configs:
+          - targets: ['rpe-otel-collector.rpe.svc.cluster.local:8889']
+
+  # DLT operational alert rules (ADR-23) — co-mounted at /etc/prometheus/dlt.rules.yml.
+  # Each service exposes rpe_dlt_depth for the DLTs it solely writes; these encode the SLO.
+  dlt.rules.yml: |
+    groups:
+      - name: rpe-dlt
+        rules:
+          - alert: RpeDltBacklog
+            expr: max by (topic) (rpe_dlt_depth{topic!~".+[.]parked"}) > 0
+            for: 10m
+            labels:
+              severity: warning
+              area: dlt
+            annotations:
+              summary: "DLT backlog on {{ $labels.topic }}"
+              description: >-
+                {{ $labels.topic }} has held {{ $value }} dead-lettered record(s) for >10m.
+                Drain with deploy/kafka/dlt-redrive.sh after the decision tree.
+          - alert: RpeDltBacklogGrowing
+            expr: delta(rpe_dlt_depth{topic!~".+[.]parked"}[15m]) > 0
+            for: 15m
+            labels:
+              severity: warning
+              area: dlt
+            annotations:
+              summary: "DLT backlog growing on {{ $labels.topic }}"
+              description: >-
+                {{ $labels.topic }} grew by {{ $value }} over 15m — systematic reject. Fix root
+                cause BEFORE re-driving.
+          - alert: RpeDltParked
+            expr: max by (topic) (rpe_dlt_depth{topic=~".+[.]parked"}) > 0
+            for: 0m
+            labels:
+              severity: critical
+              area: dlt
+            annotations:
+              summary: "Records parked on {{ $labels.topic }} — re-drive gave up"
+              description: >-
+                {{ $value }} record(s) exceeded the re-drive cap and were parked. Manual decision:
+                fix-forward (then re-drive the parked topic) or discard.
+          # META-ALERT: the depth poller itself is failing (admin transport creds — ADR-20;
+          # missing DESCRIBE ACL on a *.parked topic — ADR-23). Gauges freeze at their last
+          # value (0 at boot = false-healthy); every rule above is blind while this fires.
+          - alert: RpeDltDepthPollFailing
+            expr: increase(rpe_dlt_depth_poll_failures_total[10m]) > 5
+            for: 5m
+            labels:
+              severity: warning
+              area: dlt
+            annotations:
+              summary: "DLT depth poll failing for {{ $labels.topic }}"
+              description: >-
+                rpe.dlt.depth for {{ $labels.topic }} has not refreshed for >10m — the gauge is frozen
+                at its last value (false-healthy; a 0 here does NOT mean the DLT is empty). First
+                suspects: admin-client transport creds (ADR-20) or a missing DESCRIBE ACL on the
+                .parked topic (ADR-23). RpeDltBacklog/RpeDltParked are blind until this clears.
+
+  # Redis memory watermark (ADR-27) — canonical copy: monitoring/rules/redis.rules.yml.
+  # Under volatile-lru, pressure evicts the TTL'd dedup/vel/geo working set FIRST — detection
+  # decays silently long before Redis errors; 80% is the early tripwire.
+  redis.rules.yml: |
+    groups:
+      - name: rpe-redis
+        rules:
+          - alert: RpeRedisMemoryHigh
+            expr: (rpe_redis_used_memory_bytes / rpe_redis_maxmemory_bytes) > 0.8 and rpe_redis_maxmemory_bytes > 0
+            for: 5m
+            labels:
+              severity: warning
+              area: redis
+            annotations:
+              summary: "Redis memory above 80% of maxmemory"
+              description: >-
+                used_memory is {{ $value | humanizePercentage }} of maxmemory. volatile-lru is now (or
+                soon will be) evicting dedup/velocity/geo keys — detection quality is degrading
+                SILENTLY before any error appears. Check stats-key cardinality vs the ADR-27 idle TTL,
+                then resize maxmemory or shorten rpe.detection.stats.ttl-ms.
+          # META-ALERT: INFO poller failing — memory gauges frozen (0 at boot = false-healthy);
+          # RpeRedisMemoryHigh is blind while this fires.
+          - alert: RpeRedisInfoPollFailing
+            expr: increase(rpe_redis_info_poll_failures_total[10m]) > 5
+            for: 5m
+            labels:
+              severity: warning
+              area: redis
+            annotations:
+              summary: "Redis INFO poll failing — memory watermark is blind"
+              description: >-
+                rpe.redis.*memory gauges have not refreshed for >10m (frozen at their last value;
+                a low reading does NOT mean memory is fine). Fix the poll before trusting
+                RpeRedisMemoryHigh.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rpe-prometheus
+  namespace: rpe
+  labels:
+    app: rpe-prometheus
+    app.kubernetes.io/part-of: rpe
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rpe-prometheus
+  template:
+    metadata:
+      labels:
+        app: rpe-prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.4.0
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.retention.time=24h
+            - --web.console.libraries=/usr/share/prometheus/console_libraries
+            - --web.console.templates=/usr/share/prometheus/consoles
+          ports:
+            - containerPort: 9090
+              name: http
+          resources:
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: prometheus-config
+              mountPath: /etc/prometheus
+            - name: scrape-token
+              mountPath: /etc/prometheus/scrape-token
+              readOnly: true
+            - name: prometheus-data
+              mountPath: /prometheus
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: prometheus-config
+          configMap:
+            name: prometheus-config
+        - name: scrape-token
+          secret:
+            secretName: rpe-prometheus-scrape-token
+        - name: prometheus-data
+          emptyDir: {}
+---
+# The bearer token Prometheus presents to each service's /actuator/prometheus. Fail-closed like the
+# ConfigMap in 29-oauth-config.yaml: this wires the plumbing (mount + reference) but does NOT
+# fabricate a token — `token` stays empty in the manifest (a real credential never belongs in git),
+# and with it empty the four service scrapes stay DOWN by design. The lab IdP is now the static JWKS
+# stub (infra/22-jwks-stub.yaml + deploy/oauth/generate-jwks.sh); mint the scrape token from the same
+# key material and fill the Secret imperatively:
+#   kubectl -n rpe create secret generic rpe-prometheus-scrape-token \
+#     --from-literal=token="$(deploy/oauth/mint-jwt.sh --ttl 2592000)" \
+#     --dry-run=client -o yaml | kubectl apply -f -
+# (30d TTL: an expired token flips targets DOWN with 401s — re-mint and re-apply; prod replaces this
+# with an oauth2 client_credentials flow against the real IdP.)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rpe-prometheus-scrape-token
+  namespace: rpe
+type: Opaque
+stringData:
+  token: ""
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rpe-prometheus
+  namespace: rpe
+  labels:
+    app: rpe-prometheus
+spec:
+  selector:
+    app: rpe-prometheus
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
+      nodePort: 31090
+  type: NodePort

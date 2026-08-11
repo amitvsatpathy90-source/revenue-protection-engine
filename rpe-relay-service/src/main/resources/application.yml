@@ -1,0 +1,89 @@
+server:
+  port: 8082
+  # Graceful shutdown (ADR-22): Tomcat drains in-flight HTTP before the relay-loop stop phase.
+  shutdown: graceful
+
+spring:
+  # Per-phase cap for graceful-shutdown ordering; the relay-loop stop has its own 10s bound (ADR-22).
+  lifecycle:
+    timeout-per-shutdown-phase: 25s
+  application:
+    name: rpe-relay-service
+  threads:
+    virtual:
+      enabled: true
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:19092}
+    producer:
+      # transaction-id-prefix from RELAY_INSTANCE_ID — unique per instance, NEVER shared
+      # (ADR-06). Two relay instances sharing it → ProducerFencedException loop.
+      transaction-id-prefix: ${RELAY_INSTANCE_ID:relay-default}-
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 1
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/rpe}
+    # Stage 6: connects as relay_role — SELECT + UPDATE(status,attempts) on outbox only.
+    # search_path=detection is set by ALTER ROLE in 12-bootstrap-grants.yaml so the relay
+    # can reference 'outbox' unqualified without schema changes to any SQL.
+    username: ${DB_USER:relay_role}
+    # Secrets via environment ONLY — no default; startup fails fast (security rule).
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 2
+      connection-timeout: 5000
+
+  flyway:
+    # The relay owns NO tables — it reads detection's published `outbox` contract
+    # (ADR-17 §3.4). Schema is managed by the detection service's migrations. The relay
+    # must NOT run migrations against the shared DB. Enabled to true only in the relay's
+    # own integration test, which provisions the outbox contract DDL in an ephemeral DB.
+    enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized   # ADR-19: detail only to authenticated scrapers
+      show-components: when-authorized
+      probes:
+        enabled: true
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  # Distributed tracing (ADR-25). The relay continues the trace persisted on the outbox row, so
+  # W3C must match detection's wire format. Fail-open: unreachable endpoint drops spans only.
+  tracing:
+    enabled: true
+    sampling:
+      probability: ${RPE_TRACING_SAMPLE_PROBABILITY:1.0}
+    propagation:
+      type: W3C
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+
+rpe:
+  security:
+    oauth2:
+      # Zero-trust Actuator auth (ADR-19). Fail-closed — no default for issuer/jwk-set-uri.
+      issuer: ${RPE_OAUTH_ISSUER}
+      jwk-set-uri: ${RPE_OAUTH_JWKS_URI}
+      audience: ${RPE_OAUTH_AUDIENCE:rpe-actuator}
+      jwks-connect-timeout-ms: 2000
+      jwks-read-timeout-ms: 2000
+  relay:
+    min-poll-ms: 50
+    max-poll-ms: 5000
+    max-attempts: 5

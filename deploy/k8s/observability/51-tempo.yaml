@@ -1,0 +1,101 @@
+---
+# Grafana Tempo — trace backend.
+# Single-binary (monolithic) mode: all-in-one for lab/portfolio use.
+# Lab limitations: local storage (no S3/GCS); no replication; no RBAC.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tempo
+  namespace: rpe
+  labels:
+    app: tempo
+    app.kubernetes.io/part-of: rpe
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tempo
+  template:
+    metadata:
+      labels:
+        app: tempo
+    spec:
+      containers:
+        - name: tempo
+          image: grafana/tempo:2.7.2
+          args: ["-config.file=/etc/tempo/tempo.yaml"]
+          ports:
+            - containerPort: 4317
+              name: otlp-grpc
+            - containerPort: 3200
+              name: http
+          resources:
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: tempo-config
+              mountPath: /etc/tempo
+            - name: tempo-data
+              mountPath: /tmp/tempo
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3200
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: tempo-config
+          configMap:
+            name: tempo-config
+        - name: tempo-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-config
+  namespace: rpe
+data:
+  tempo.yaml: |
+    server:
+      http_listen_port: 3200
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+    ingester:
+      trace_idle_period: 10s
+      max_block_duration: 5m
+    compactor:
+      compaction:
+        block_retention: 24h
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /tmp/tempo/blocks
+        wal:
+          path: /tmp/tempo/wal
+    query_frontend:
+      search:
+        max_duration: 0s
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+  namespace: rpe
+  labels:
+    app: tempo
+spec:
+  selector:
+    app: tempo
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: http
+      port: 3200
+      targetPort: 3200

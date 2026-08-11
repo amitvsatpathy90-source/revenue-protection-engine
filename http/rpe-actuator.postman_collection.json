@@ -1,0 +1,146 @@
+{
+  "info": {
+    "name": "RPE Actuator Endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Detection /health/liveness",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:8080/actuator/health/liveness",
+          "host": ["http://localhost:8080"],
+          "path": ["actuator", "health", "liveness"]
+        }
+      }
+    },
+    {
+      "name": "Detection /health/readiness",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:8080/actuator/health/readiness",
+          "host": ["http://localhost:8080"],
+          "path": ["actuator", "health", "readiness"]
+        }
+      }
+    },
+    {
+      "name": "Detection /actuator/health",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{RPE_SCRAPE_JWT}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8080/actuator/health",
+          "host": ["http://localhost:8080"],
+          "path": ["actuator", "health"]
+        }
+      }
+    },
+    {
+      "name": "Detection /actuator/info",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{RPE_SCRAPE_JWT}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8080/actuator/info",
+          "host": ["http://localhost:8080"],
+          "path": ["actuator", "info"]
+        }
+      }
+    },
+    {
+      "name": "Detection /actuator/prometheus",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{RPE_SCRAPE_JWT}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8080/actuator/prometheus",
+          "host": ["http://localhost:8080"],
+          "path": ["actuator", "prometheus"]
+        }
+      }
+    },
+    {
+      "name": "Relay /actuator/health",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{RPE_SCRAPE_JWT}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8082/actuator/health",
+          "host": ["http://localhost:8082"],
+          "path": ["actuator", "health"]
+        }
+      }
+    },
+    {
+      "name": "Alert /actuator/health",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{RPE_SCRAPE_JWT}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8083/actuator/health",
+          "host": ["http://localhost:8083"],
+          "path": ["actuator", "health"]
+        }
+      }
+    },
+    {
+      "name": "Triage /actuator/health",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{RPE_SCRAPE_JWT}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8081/actuator/health",
+          "host": ["http://localhost:8081"],
+          "path": ["actuator", "health"]
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "RPE_SCRAPE_JWT",
+      "value": ""
+    }
+  ]
+}

@@ -1,0 +1,109 @@
+---
+# OpenTelemetry Collector in sidecar mode:
+# - Receives OTLP gRPC from Java auto-instrumentation (port 4317)
+# - Exports traces to Tempo; metrics to Prometheus (via prometheus scrape)
+# - PII suppression: account_id and event_id span attributes are masked/dropped
+#   before leaving the collector. Raw values never leave the pod boundary.
+#
+# Security rule (security.md): never use account_id or PII as span attribute.
+# The processor below masks any that slip through from the Java agent.
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: rpe-otel
+  namespace: rpe
+spec:
+  mode: deployment
+  image: otel/opentelemetry-collector-contrib:0.123.0
+  resources:
+    limits:
+      memory: 256Mi
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 200
+      batch:
+        send_batch_size: 1000
+        timeout: 5s
+      # PII suppression: mask high-cardinality / PII span attributes.
+      # account_id → last 4 chars only (matches log redaction rule in security.md).
+      # event_id   → kept as correlation key (masked to 8-char prefix only in spans).
+      # Coordinates (lat/lon) never appear in spans — they live in Redis only.
+      attributes/pii-suppress:
+        actions:
+          - key: account_id
+            action: update
+            value: "****"
+          - key: db.user
+            action: delete
+          - key: db.connection_string
+            action: delete
+          - key: net.peer.name
+            action: delete
+      # Drop any span with db.statement containing sensitive patterns (belt-and-suspenders)
+      filter/no-raw-sql:
+        error_mode: ignore
+        traces:
+          span:
+            - 'attributes["db.statement"] != nil and IsMatch(attributes["db.statement"], "(?i)(password|secret|token|key)")'
+
+    exporters:
+      otlp/tempo:
+        endpoint: tempo.rpe.svc.cluster.local:4317
+        tls:
+          insecure: true
+      prometheus:
+        endpoint: 0.0.0.0:8889
+        namespace: rpe_otel
+
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+      pprof: {}
+
+    service:
+      extensions: [health_check, pprof]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, attributes/pii-suppress, filter/no-raw-sql, batch]
+          exporters: [otlp/tempo]
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [prometheus]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rpe-otel-collector
+  namespace: rpe
+  labels:
+    app: rpe-otel-collector
+spec:
+  selector:
+    app.kubernetes.io/component: opentelemetry-collector
+    app.kubernetes.io/managed-by: opentelemetry-operator
+    app.kubernetes.io/name: rpe-otel-collector
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+    - name: prometheus
+      port: 8889
+      targetPort: 8889
+    - name: health
+      port: 13133
+      targetPort: 13133

@@ -1,0 +1,264 @@
+# Explicit allow-paths after the default-deny above.
+# Each rule opens exactly the traffic ADR-17 permits — no broader.
+#
+# Topology:
+#   detection → Kafka (produce payment.events.DLT) + Redis + Postgres
+#   relay     → Kafka (produce payment.alerts) + Postgres
+#   alert     → Kafka (consume payment.alerts, produce payment.alerts.DLT) + Postgres
+#   triage    → Kafka (consume payment.alerts, produce triaged+triage.DLT) + Redis + Postgres
+#   Prometheus → all services :actuator
+#   All services → jwks-stub :80 (ADR-19 JWKS fetch — see the scoped pair at the bottom)
+#   All pods  → kube-dns (CoreDNS)
+#   CNPG pods → each other (streaming replication + healthcheck)
+
+# ── DNS (all pods need CoreDNS) ───────────────────────────────────────────────
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: rpe
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+# ── detection-service ─────────────────────────────────────────────────────────
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-detection-egress
+  namespace: rpe
+spec:
+  podSelector:
+    matchLabels:
+      app: rpe-detection-service
+  policyTypes: [Egress]
+  egress:
+    - ports: [{port: 9092}]    # Kafka
+    - ports: [{port: 6379}]    # Redis
+    - ports: [{port: 5432}]    # Postgres (CNPG rw service)
+    - ports: [{port: 4317}]    # OTel collector gRPC
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-detection-ingress
+  namespace: rpe
+spec:
+  podSelector:
+    matchLabels:
+      app: rpe-detection-service
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{port: 8080}]    # actuator/prometheus (Prometheus scrape + health probes)
+
+# ── relay-service ─────────────────────────────────────────────────────────────
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-relay-egress
+  namespace: rpe
+spec:
+  podSelector:
+    matchLabels:
+      app: rpe-relay-service
+  policyTypes: [Egress]
+  egress:
+    - ports: [{port: 9092}]    # Kafka
+    - ports: [{port: 5432}]    # Postgres
+    - ports: [{port: 4317}]    # OTel
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-relay-ingress
+  namespace: rpe
+spec:
+  podSelector:
+    matchLabels:
+      app: rpe-relay-service
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{port: 8082}]
+
+# ── alert-service ─────────────────────────────────────────────────────────────
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-alert-egress
+  namespace: rpe
+spec:
+  podSelector:
+    matchLabels:
+      app: rpe-alert-service
+  policyTypes: [Egress]
+  egress:
+    - ports: [{port: 9092}]    # Kafka
+    - ports: [{port: 5432}]    # Postgres
+    - ports: [{port: 4317}]    # OTel
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-alert-ingress
+  namespace: rpe
+spec:
+  podSelector:
+    matchLabels:
+      app: rpe-alert-service
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{port: 8083}]
+
+# ── triage-agent ─────────────────────────────────────────────────────────────
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-triage-egress
+  namespace: rpe
+spec:
+  podSelector:
+    matchLabels:
+      app: rpe-triage-agent
+  policyTypes: [Egress]
+  egress:
+    - ports: [{port: 9092}]    # Kafka
+    - ports: [{port: 6379}]    # Redis (read-only @Tool: redisAccountHistory)
+    - ports: [{port: 5432}]    # Postgres (read-only @Tool: recentAlertsForAccount + inbox)
+    - ports: [{port: 443}]     # LLM provider (HTTPS)
+    - ports: [{port: 4317}]    # OTel
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-triage-ingress
+  namespace: rpe
+spec:
+  podSelector:
+    matchLabels:
+      app: rpe-triage-agent
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{port: 8081}]
+
+# ── Prometheus (scrape egress to all actuator ports + OTel collector) ────────
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-egress
+  namespace: rpe
+spec:
+  podSelector:
+    matchLabels:
+      app: rpe-prometheus
+  policyTypes: [Egress]
+  egress:
+    - ports: [{port: 8080}]    # detection actuator
+    - ports: [{port: 8081}]    # triage actuator
+    - ports: [{port: 8082}]    # relay actuator
+    - ports: [{port: 8083}]    # alert actuator
+    - ports: [{port: 8889}]    # OTel collector prometheus exporter
+    - ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]  # DNS
+
+# ── OTel collector (receive from services, export to Tempo) ──────────────────
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-otel-collector
+  namespace: rpe
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: rpe-otel-collector
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports: [{port: 4317}]   # OTLP gRPC from services
+    - ports: [{port: 4318}]   # OTLP HTTP from services
+  egress:
+    - ports: [{port: 4317}]   # forward traces to Tempo
+    - ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+
+# ── CNPG pods (streaming replication + operator healthchecks) ─────────────────
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cnpg-internal
+  namespace: rpe
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: rpe-pg
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: rpe-pg
+    - from:                         # operator webhook + healthcheck
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg-system
+    - ports: [{port: 5432}]         # service pods in rpe namespace
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: rpe-pg
+    - ports: [{port: 5432}]
+    - ports: [{port: 53}, {port: 53, protocol: TCP}]
+
+# ── JWKS stub (ADR-19: every service fetches the JWK Set at decoder init/refresh) ─────
+# Scoped pod-to-pod (not port-only like the service egress rules above) because the stub is a
+# security dependency: only the four resource-server services may reach it, and it accepts
+# nothing else. The stub itself needs no egress — it serves a static file.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-jwks-fetch-egress
+  namespace: rpe
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [rpe-detection-service, rpe-relay-service, rpe-alert-service, rpe-triage-agent]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: jwks-stub
+      ports: [{port: 80}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-jwks-stub-ingress
+  namespace: rpe
+spec:
+  podSelector:
+    matchLabels:
+      app: jwks-stub
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [rpe-detection-service, rpe-relay-service, rpe-alert-service, rpe-triage-agent]
+      ports: [{port: 80}]

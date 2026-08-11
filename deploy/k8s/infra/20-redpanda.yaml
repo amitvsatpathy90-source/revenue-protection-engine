@@ -1,0 +1,165 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redpanda
+  namespace: rpe
+  labels:
+    app: redpanda
+    app.kubernetes.io/part-of: rpe
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redpanda
+  template:
+    metadata:
+      labels:
+        app: redpanda
+    spec:
+      # Pod-level hardening (arch-audit F-01). uid 101 is redpanda's real container user (verified:
+      # `docker run --entrypoint sh <image> -c 'grep redpanda /etc/passwd'` -> 101:101 — same value
+      # already confirmed and pinned for the ECS EFS access points, chaosforge-infra F-07 close-out).
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redpanda
+          image: docker.redpanda.com/redpandadata/redpanda:v24.1.11
+          securityContext:
+            allowPrivilegeEscalation: false
+            # readOnlyRootFilesystem is deliberately NOT set here (arch-audit F-01 follow-up):
+            # `rpk redpanda start` regenerates /etc/redpanda/redpanda.yaml via an atomic
+            # temp-file+rename on every boot (/var/lib/redpanda/conf is a symlink to /etc/redpanda),
+            # so a read-only rootfs dies at startup — proven: `docker run --read-only` →
+            # "error writing to temporary file: open /etc/redpanda/redpanda-<tmp>: read-only file
+            # system", exit 1. `rpk redpanda start` has no --config flag to redirect it. This matches
+            # the ECS deployment, which also runs its data tier without readonlyRootFilesystem
+            # (chaosforge-infra rpe/ecs-task-definitions.tf). Redis, by contrast, keeps it (21-redis.yaml)
+            # — it only writes /data. Every other control (non-root, drop-ALL, no-priv-esc, seccomp) stays.
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 512Mi
+          args:
+            - start
+            - --overprovisioned
+            - --smp
+            - "1"
+            - --memory
+            - 400M
+            - --reserve-memory
+            - 0M
+            - --node-id
+            - "0"
+            - --check=false
+            - --kafka-addr
+            - PLAINTEXT://0.0.0.0:9092
+            - --advertise-kafka-addr
+            - PLAINTEXT://redpanda.rpe.svc.cluster.local:9092
+            - --rpc-addr
+            - 0.0.0.0:33145
+            - --advertise-rpc-addr
+            - redpanda.rpe.svc.cluster.local:33145
+          ports:
+            - containerPort: 9092
+              name: kafka-internal
+            - containerPort: 19092
+              name: kafka-external
+          # Data dir (redpanda.yaml data_directory: "/var/lib/redpanda/data"), plus rpk's own
+          # .cache/.config and coredump — all redpanda-owned, written at runtime.
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/redpanda
+          readinessProbe:
+            exec:
+              command: ["rpk", "cluster", "health"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 8
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda
+  namespace: rpe
+  labels:
+    app: redpanda
+spec:
+  selector:
+    app: redpanda
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: 9092
+    - name: kafka-ext
+      port: 19092
+      targetPort: 19092
+      nodePort: 31092   # external port for console consumers from the Mac host
+  type: NodePort
+---
+# Topic init job — runs once after Redpanda is ready.
+# Includes payment.alerts.triage.DLT (ADR-18: sole-writer triage-agent).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redpanda-topic-init
+  namespace: rpe
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      # arch-audit F-01: one-shot topic-init Job, calls no Kubernetes API — automount off
+      # (zero-tradeoff). No readOnlyRootFilesystem: rpk writes /etc/redpanda, same as the broker.
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-broker
+          image: docker.redpanda.com/redpandadata/redpanda:v24.1.11
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # rpk cluster health uses the local Redpanda admin API (port 9644), not
+              # the Kafka port — it always connects to 127.0.0.1:9644 and fails in a
+              # remote pod. Use 'rpk topic list' which uses the Kafka protocol and
+              # respects -X brokers= for remote broker readiness checks.
+              until rpk topic list -X brokers=redpanda.rpe.svc.cluster.local:9092 2>/dev/null; do
+                echo "waiting for Redpanda..."; sleep 3
+              done
+      containers:
+        - name: init-topics
+          image: docker.redpanda.com/redpandadata/redpanda:v24.1.11
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # rpk v24.1.x flag names: --replicas (not --replication-factor), -X brokers=
+              B="redpanda.rpe.svc.cluster.local:9092"
+              rpk topic create payment.events            -p 12 --replicas 1 -X brokers=$B || true
+              rpk topic create payment.alerts            -p 3  --replicas 1 -X brokers=$B || true
+              # DLT + parked retention PINNED (14d) + segment.ms (1d): retention deletes only rolled
+              # segments and DLTs are low-volume — broker-default timing is unreliable. Contract:
+              # processed_alerts purge (30d) > DLT+parked retention (14d) + re-drive latency.
+              C="-c retention.ms=1209600000 -c segment.ms=86400000"
+              rpk topic create payment.events.DLT        -p 3  --replicas 1 $C -X brokers=$B || true
+              rpk topic create payment.alerts.DLT        -p 3  --replicas 1 $C -X brokers=$B || true
+              rpk topic create payment.alerts.triaged    -p 3  --replicas 1 -X brokers=$B || true
+              rpk topic create payment.alerts.triage.DLT -p 3  --replicas 1 $C -X brokers=$B || true
+              # Re-drive parking topics (ADR-23): records that re-poisoned past the attempt cap land
+              # here. Same pinned retention: parking is quarantine with a KNOWN 14d decision window.
+              rpk topic create payment.events.DLT.parked        -p 3 --replicas 1 $C -X brokers=$B || true
+              rpk topic create payment.alerts.DLT.parked        -p 3 --replicas 1 $C -X brokers=$B || true
+              rpk topic create payment.alerts.triage.DLT.parked -p 3 --replicas 1 $C -X brokers=$B || true
+              echo "Topics ready."

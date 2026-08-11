@@ -1,0 +1,16 @@
+apiVersion: 1
+
+providers:
+  - name: 'RPE Local Dev'
+    orgId: 1
+    folder: 'RPE Core'
+    type: file
+    
+    # 🔒 Guardrails: Enforces Git as single source of truth
+    disableDeletion: true               # Disables UI deletion button
+    editable: false                     # Hides UI save button
+    
+    updateIntervalSeconds: 5            # Hot-reloads JSON file changes saved in code editor
+    options:
+      path: /var/lib/grafana/dashboards # Target path inside container
+      foldersFromFilesStructure: true   # Maps directory tree directly to UI folders

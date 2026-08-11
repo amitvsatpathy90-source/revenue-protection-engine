@@ -1,0 +1,31 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# DLT operational alerting (ADR-23) + Redis memory watermark (ADR-27). Mounted at /etc/prometheus/rules/.
+rule_files:
+  - /etc/prometheus/rules/dlt.rules.yml
+  - /etc/prometheus/rules/redis.rules.yml
+
+# ADR-19: /actuator/prometheus requires a JWT with scope `metrics:scrape` on every service, so
+# each job carries a bearer token from /etc/prometheus/scrape_token (materialized by the compose
+# prometheus entrypoint from RPE_PROM_SCRAPE_TOKEN; mint: deploy/oauth/mint-jwt.sh --ttl 2592000).
+# Same lab-vs-prod split as prometheus.services.yml: prod replaces `authorization` with an
+# `oauth2:` client_credentials block.
+scrape_configs:
+  - job_name: rpe
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+    metrics_path: /actuator/prometheus
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/scrape_token
+  # Advisory triage module (ADR-15) — target exists only when the "triage" compose
+  # profile is up; scrape failures otherwise are expected and harmless
+  - job_name: rpe-triage
+    static_configs:
+      - targets: ["triage-agent:8081"]
+    metrics_path: /actuator/prometheus
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/scrape_token

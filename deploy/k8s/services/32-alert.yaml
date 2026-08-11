@@ -1,0 +1,123 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rpe-alert-service
+  namespace: rpe
+  labels:
+    app: rpe-alert-service
+    app.kubernetes.io/part-of: rpe
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rpe-alert-service
+  template:
+    metadata:
+      labels:
+        app: rpe-alert-service
+      # ADR-25: OTel Java agent removed — app-level Micrometer tracing exports OTLP (see env).
+    spec:
+      # Graceful shutdown (ADR-22): preStop(5s) + the synchronous in-flight insert (≤30s block) + margin.
+      terminationGracePeriodSeconds: 45
+      # Pod-level hardening (arch-audit F-01) — same uid/rationale as 30-detection.yaml.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: alert
+          image: rpe-alert-service:latest
+          imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          lifecycle:
+            preStop:
+              # Endpoint-deregistration window; the Kafka container then drains the in-flight consume() (ADR-22).
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 256Mi
+          ports:
+            - containerPort: 8083
+              name: http
+          env:
+            # ADR-25: app-level OTLP trace export to the Stage-6 collector → Tempo pipeline.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://rpe-otel-collector.rpe.svc.cluster.local:4318/v1/traces
+            # Zero-trust Actuator auth (ADR-19) — fail-closed, no default in application.yml.
+            - name: RPE_OAUTH_ISSUER
+              valueFrom:
+                configMapKeyRef:
+                  name: rpe-oauth-config
+                  key: issuer
+            - name: RPE_OAUTH_JWKS_URI
+              valueFrom:
+                configMapKeyRef:
+                  name: rpe-oauth-config
+                  key: jwks-uri
+            - name: RPE_OAUTH_AUDIENCE
+              valueFrom:
+                configMapKeyRef:
+                  name: rpe-oauth-config
+                  key: audience
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: redpanda.rpe.svc.cluster.local:9092
+            - name: DB_URL
+              value: jdbc:postgresql://rpe-pg-rw.rpe.svc.cluster.local:5432/rpe
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rpe-alert-db
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rpe-alert-db
+                  key: password
+            # temurin's default HOME is unwritable under readOnlyRootFilesystem (arch-audit F-01).
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8083
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8083
+            initialDelaySeconds: 20
+            periodSeconds: 10
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rpe-alert-service
+  namespace: rpe
+  labels:
+    app: rpe-alert-service
+spec:
+  selector:
+    app: rpe-alert-service
+  ports:
+    - port: 8083
+      targetPort: 8083
+      name: http

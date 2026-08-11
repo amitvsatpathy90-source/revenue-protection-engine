@@ -1,0 +1,136 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rpe-detection-service
+  namespace: rpe
+  labels:
+    app: rpe-detection-service
+    app.kubernetes.io/part-of: rpe
+  # ADR-25: the OTel Java agent (inject-java) is REMOVED — app-level Micrometer tracing is the
+  # source of truth (it is the only thing that can stitch the trace across the outbox hop). The
+  # app exports OTLP straight to the collector via OTEL_EXPORTER_OTLP_ENDPOINT below.
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rpe-detection-service
+  template:
+    metadata:
+      labels:
+        app: rpe-detection-service
+    spec:
+      # Graceful shutdown (ADR-22): must exceed preStop(5s) + web drain + Kafka stop + lane
+      # drain(5s) + outbox flush(5s) + pool close, with margin. Detection has the most phases.
+      terminationGracePeriodSeconds: 60
+      # Pod-level hardening (arch-audit F-01). uid 1000 matches temurin's default container user —
+      # the same uid the AWS/ECS deployment of this image already runs as (chaosforge-infra
+      # ecs-task-definitions.tf), verified locally under `docker run --read-only`.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: detection
+          image: rpe-detection-service:latest
+          imagePullPolicy: Never   # uses image loaded into OrbStack's local registry
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          lifecycle:
+            preStop:
+              # Endpoint-deregistration window: the readiness flip (ContextClosedEvent →
+              # REFUSING_TRAFFIC) + this sleep let the endpoints controller remove the pod
+              # before SIGTERM begins the drain, so no new request races the shutdown.
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 512Mi
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            # ADR-25: app-level Micrometer/OTel exports OTLP traces to the collector (the same
+            # collector → Tempo pipeline from Stage 6). Service name = spring.application.name.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://rpe-otel-collector.rpe.svc.cluster.local:4318/v1/traces
+            # Zero-trust Actuator auth (ADR-19) — fail-closed, no default in application.yml.
+            - name: RPE_OAUTH_ISSUER
+              valueFrom:
+                configMapKeyRef:
+                  name: rpe-oauth-config
+                  key: issuer
+            - name: RPE_OAUTH_JWKS_URI
+              valueFrom:
+                configMapKeyRef:
+                  name: rpe-oauth-config
+                  key: jwks-uri
+            - name: RPE_OAUTH_AUDIENCE
+              valueFrom:
+                configMapKeyRef:
+                  name: rpe-oauth-config
+                  key: audience
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: redpanda.rpe.svc.cluster.local:9092
+            - name: REDIS_HOST
+              value: redis.rpe.svc.cluster.local
+            - name: REDIS_PORT
+              value: "6379"
+            - name: DB_URL
+              value: jdbc:postgresql://rpe-pg-rw.rpe.svc.cluster.local:5432/rpe
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rpe-detection-db
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rpe-detection-db
+                  key: password
+            # temurin's default HOME=/home/ubuntu is unwritable under readOnlyRootFilesystem
+            # (arch-audit F-01) — same fix as the ECS task definition for this image.
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rpe-detection-service
+  namespace: rpe
+  labels:
+    app: rpe-detection-service
+spec:
+  selector:
+    app: rpe-detection-service
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http

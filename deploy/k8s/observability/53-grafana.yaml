@@ -1,0 +1,100 @@
+---
+# Grafana — metrics (Prometheus) + traces (Tempo).
+# Lab-only: anonymous auth enabled; no persistence (emptyDir).
+# Production path: persistent volume + OIDC auth + RBAC.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: rpe
+  labels:
+    app: grafana
+    app.kubernetes.io/part-of: rpe
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:12.0.1
+          ports:
+            - containerPort: 3000
+              name: http
+          resources:
+            limits:
+              memory: 256Mi
+          env:
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: "Admin"
+            - name: GF_AUTH_DISABLE_LOGIN_FORM
+              value: "true"
+            - name: GF_SERVER_ROOT_URL
+              value: "http://localhost:3001"
+          volumeMounts:
+            - name: grafana-datasources
+              mountPath: /etc/grafana/provisioning/datasources
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: grafana-datasources
+          configMap:
+            name: grafana-datasources
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: rpe
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://rpe-prometheus.rpe.svc.cluster.local:9090
+        isDefault: true
+        access: proxy
+        editable: false
+      - name: Tempo
+        type: tempo
+        url: http://tempo.rpe.svc.cluster.local:3200
+        access: proxy
+        editable: false
+        jsonData:
+          tracesToLogsV2:
+            datasourceUid: ""
+          serviceMap:
+            datasourceUid: "prometheus"
+          search:
+            hide: false
+          nodeGraph:
+            enabled: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: rpe
+  labels:
+    app: grafana
+spec:
+  selector:
+    app: grafana
+  ports:
+    - name: http
+      port: 3001
+      targetPort: 3000
+      nodePort: 31003   # accessible from Mac: http://localhost:31003
+  type: NodePort

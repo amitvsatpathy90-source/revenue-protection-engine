@@ -1,0 +1,53 @@
+# Prometheus scrape config for the CANONICAL four-service topology (ADR-17 §7 Stage 5).
+# Mounted by deploy/docker-compose.services.yml. Every service runs as a container on the
+# compose network, so targets are service-name DNS — NOT host.docker.internal (that is the
+# dev all-in-one config in ./prometheus.yml, where detection runs on the host via mvn).
+#
+# One scrape job per deployable; each exposes its own /actuator/prometheus (security.md:
+# no account_id / PII / high-cardinality label — tag by rule_type/outcome only).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# DLT operational alerting (ADR-23) + Redis memory watermark (ADR-27). Mounted at /etc/prometheus/rules/.
+rule_files:
+  - /etc/prometheus/rules/dlt.rules.yml
+  - /etc/prometheus/rules/redis.rules.yml
+
+# Scrapes authenticate as an OAuth2 Resource Server client (ADR-19): each /actuator/prometheus
+# requires a JWT with scope `metrics:scrape`. LAB uses a static bearer token mounted at
+# /etc/prometheus/scrape_token; PROD replaces each `authorization` block with an `oauth2:`
+# client_credentials block (token_url + client_id/secret + scopes: [metrics:scrape]).
+scrape_configs:
+  - job_name: rpe-detection
+    static_configs:
+      - targets: ["rpe-detection-service:8080"]
+    metrics_path: /actuator/prometheus
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/scrape_token
+
+  - job_name: rpe-relay
+    static_configs:
+      - targets: ["rpe-relay-service:8082"]
+    metrics_path: /actuator/prometheus
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/scrape_token
+
+  - job_name: rpe-alert
+    static_configs:
+      - targets: ["rpe-alert-service:8083"]
+    metrics_path: /actuator/prometheus
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/scrape_token
+
+  # Advisory triage (ADR-15) — runs degraded with the LLM absent; scrape still succeeds.
+  - job_name: rpe-triage
+    static_configs:
+      - targets: ["rpe-triage-agent:8081"]
+    metrics_path: /actuator/prometheus
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/scrape_token

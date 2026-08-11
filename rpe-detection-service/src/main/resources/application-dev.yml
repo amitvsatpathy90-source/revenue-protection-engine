@@ -1,0 +1,9 @@
+rpe:
+  dev:
+    blockhound:
+      enabled: true        # 5-10% instrumentation overhead — dev only
+    reactor-debug-agent: true    # significant overhead — dev only
+    # VT pinning trace is JVM-arg only: -Djdk.tracePinnedThreads=full (no Spring property)
+
+  # <--- CRITICAL: Spring Boot disables raw env/config properties in /info by default for security
+

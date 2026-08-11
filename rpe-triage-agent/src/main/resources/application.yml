@@ -1,0 +1,140 @@
+server:
+  port: 8081
+  # Graceful shutdown (ADR-22): Tomcat drains in-flight HTTP; the Kafka container's stop()
+  # awaits the synchronous in-flight process() (≤12s LLM TimeLimiter) before terminating.
+  shutdown: graceful
+
+spring:
+  # Per-phase cap for graceful-shutdown ordering. Sized above the 12s LLM TimeLimiter so an
+  # in-flight triage finishes rather than being killed (ADR-22 / ai-triage-rules §5).
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  application:
+    name: rpe-triage-agent
+  threads:
+    virtual:
+      enabled: true
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:19092}
+    consumer:
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/rpe}
+    # Stage 6: connects as triage_role — schema owner of 'triage', SELECT on 'alert'
+    # (for processed_alerts tool query). search_path = triage, alert via ALTER ROLE
+    # in 12-bootstrap-grants.yaml — both schemas accessible unqualified.
+    username: ${DB_USER:triage_role}
+    # Secrets via environment ONLY — no default; startup fails fast (security rule)
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 4
+      minimum-idle: 1
+      connection-timeout: 5000
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    schemas: triage
+    # Separate history table per service — shared DB, no state corruption (ADR-17 §5.2).
+    table: flyway_schema_history_triage
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # Bound the blocking redisAccountHistory @Tool the same way its sibling JDBC tool is bounded
+      # (setQueryTimeout(5)); without it Lettuce inherits the 60s default. The 12s LLM TimeLimiter
+      # already caps the whole tool-calling round, so this is defence-in-depth/consistency (RPE-08).
+      timeout: 500ms
+
+  ai:
+    openai:
+      # Sentinel (not a credential): module must START and serve degraded verdicts
+      # with the LLM permanently absent (ADR-15 §9). A real key comes from env only.
+      # Calls with the sentinel fail 401 → non-retryable → degraded.
+      api-key: ${SPRING_AI_OPENAI_API_KEY:llm-disabled-sentinel}
+      # Disable the OpenAI SDK's OWN internal retry (RetryingHttpClient; Spring AI default 3) so the
+      # R4j Retry boundary is the SOLE retrier (ai-triage-rules §5). With the SDK also retrying, a
+      # 429/5xx fans out to 3 (R4j) × (1+3 SDK) provider calls with nested backoffs, and the SDK's
+      # internal waits could burn the whole 12s TimeLimiter inside one R4j attempt. Latent until the
+      # RPE-10 fix made R4j's retry actually fire; closing RPE-10 means owning retry in one place.
+      # This is the COMMON property: OpenAiChatAutoConfiguration reads OpenAiCommonProperties
+      # .getMaxRetries() — the chat-scoped spring.ai.openai.chat.max-retries is NOT wired to the
+      # chat client in Spring AI 2.0 (verified via bytecode).
+      max-retries: 0
+      chat:
+        # Hard OkHttp request timeout on the SDK client (Spring AI default is 60s). The R4j
+        # TimeLimiter (12s) is the primary bound, but it cancels a Future — and OkHttp does not
+        # reliably abort on interrupt — so without this the socket read could block ~60s past the
+        # TimeLimiter, leaking the VT + its connection with no metric. Set above 12s so R4j stays
+        # the primary bound and this is the guaranteed backstop (RPE-02).
+        timeout: 15s
+        options:
+          model: ${TRIAGE_LLM_MODEL:gpt-4o-mini}
+          temperature: 0.2
+    retry:
+      # Spring AI's LEGACY RetryTemplate — belt-and-suspenders. The retry layer that actually
+      # stacked on R4j is the OpenAI SDK's own (chat.max-retries: 0 above); this covers any path
+      # still routed through the RetryTemplate. 1 attempt = disabled; R4j owns retry (rules §5).
+      max-attempts: 1
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized   # ADR-19: detail only to authenticated scrapers
+      show-components: when-authorized
+      probes:
+        enabled: true
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  # Distributed tracing (ADR-25). The triage consumer auto-continues the trace from the
+  # payment.alerts traceparent header; the LLM call appears as a gen_ai span under it (Spring AI
+  # observation). W3C to match; fail-open on an unreachable endpoint.
+  tracing:
+    enabled: true
+    sampling:
+      probability: ${RPE_TRACING_SAMPLE_PROBABILITY:1.0}
+    propagation:
+      type: W3C
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+
+rpe:
+  security:
+    oauth2:
+      # Zero-trust Actuator auth (ADR-19). Fail-closed — no default for issuer/jwk-set-uri.
+      issuer: ${RPE_OAUTH_ISSUER}
+      jwk-set-uri: ${RPE_OAUTH_JWKS_URI}
+      audience: ${RPE_OAUTH_AUDIENCE:rpe-actuator}
+      jwks-connect-timeout-ms: 2000
+      jwks-read-timeout-ms: 2000
+
+triage:
+  prompt-version: v1
+  llm:
+    time-limit-ms: 12000          # hard cap; cancelRunningFuture=true
+    slow-call-ms: 8000            # CB sees degradation as latency before errors
+    slow-rate-threshold: 50
+    failure-rate-threshold: 50
+    sliding-window-size: 20
+    half-open-calls: 3
+    wait-open-ms: 30000
+    bulkhead-concurrent: 5
+    rpm: ${TRIAGE_LLM_RPM:30}     # the billing breaker
+    retry-max-attempts: 3         # initial + 2 retries — transport/429/5xx ONLY
+    retry-backoff-ms: 1000
+  sweep:
+    stale-after: 5m
+    batch: 50
+  dev:
+    log-prompts: false            # dev profile only; never enable in compose defaults

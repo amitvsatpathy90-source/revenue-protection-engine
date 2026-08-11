@@ -1,0 +1,119 @@
+# CI: per-service verify on every push/PR (matrix — the four services are independent siblings,
+# "build lifecycles are NOT reactor-aggregated", ADR-17 §3.5); image push to ECR only on main.
+#
+# AWS access is OIDC role assumption (no stored AWS keys — chaosforge-infra foundation/iam-oidc.tf).
+# Repository variables required: AWS_DEPLOY_ROLE_ARN, AWS_REGION.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Fails if a PUBLIC doc references a test/class/ADR that no longer exists (scripts/check-doc-drift.sh).
+  # CI sees only public files — private AI context files are gitignored, so this catches
+  # README/design-doc drift. The FULL check (incl. those private files) is the local pre-upload run.
+  doc-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash scripts/check-doc-drift.sh
+
+  # Verifies all explicit relative file paths across git-tracked files resolve on disk (scripts/check-path-drift.sh).
+  path-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash scripts/check-path-drift.sh
+
+  # Lints the migration-safety gate itself — it is bash 4+ (mapfile, declare -A associative
+  # arrays), so shellcheck catches a portability/quoting regression before it silently mis-parses
+  # a diff. shellcheck is preinstalled on ubuntu-latest.
+  lint-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: shellcheck scripts/check-migration-safety.sh
+
+  # Migration-compat gate (arch-audit F-09; rule lives in infrastructure config rules). Fails if
+  # a newly added Flyway migration contains destructive DDL (DROP COLUMN/TABLE, RENAME, SET NOT
+  # NULL) with no explicit `-- migration-safety: override <reason>` marker — migrations run
+  # in-process at app boot on a rolling deploy, so an unguarded destructive change breaks the
+  # OLD version still serving traffic during the deploy window. Relay is Flyway-disabled (owns no
+  # tables, infra-config.md) — not in this list on purpose.
+  migration-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0   # full history needed to diff against origin/main
+      - run: |
+          bash scripts/check-migration-safety.sh \
+            rpe-detection-service/src/main/resources/db/migration \
+            rpe-alert-service/src/main/resources/db/migration \
+            rpe-triage-agent/src/main/resources/db/migration
+
+  # Cross-POM pin alignment (CHANGELOG v1.15). The four POMs are standalone by design
+  # (ADR-17 §3.5 — no shared parent/BOM to hold pins), so this gate turns version alignment
+  # from a convention into a build fact: any coordinate declared in ≥2 POMs must resolve to
+  # one version, and all io.github.resilience4j artifacts must share one version repo-wide
+  # (the POMs pin disjoint r4j artifactIds, invisible to per-coordinate checking). Renovate
+  # (renovate.json) keeps pins aligned on upgrade; this catches manual single-POM edits.
+  pin-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: python3 scripts/check-pin-drift.py rpe-*/pom.xml
+
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [rpe-detection-service, rpe-relay-service, rpe-alert-service, rpe-triage-agent]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - run: mvn -f ${{ matrix.service }}/pom.xml -q -B verify
+
+  push-images:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        include: # service dir -> ECR repo name (chaosforge-infra rpe/ecr.tf)
+          - dir: rpe-detection-service
+            repo: rpe/detection
+          - dir: rpe-relay-service
+            repo: rpe/relay
+          - dir: rpe-alert-service
+            repo: rpe/alert
+          - dir: rpe-triage-agent
+            repo: rpe/triage
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2.1.6
+      # Each service's Dockerfile is already a self-contained multi-stage build (its own maven
+      # stage), so no host-side package step here; verify above is the quality gate, the image
+      # build is just packaging. Tag = commit SHA (IMMUTABLE ECR repos).
+      - run: |
+          IMAGE="${{ steps.ecr.outputs.registry }}/${{ matrix.repo }}:${GITHUB_SHA::12}"
+          docker build -t "$IMAGE" ${{ matrix.dir }}
+          docker push "$IMAGE"

@@ -1,0 +1,6 @@
+# Build context = this service dir (compose `build: ../rpe-detection-service`; k8s image builds
+# likewise). The root .dockerignore does NOT travel with this context — exclusions must live here.
+# The Dockerfile COPYs pom.xml + src selectively, so this trims context upload, not the image.
+target/
+*.log
+.DS_Store

@@ -1,0 +1,36 @@
+# Defense-in-depth: current Dockerfiles COPY pom.xml/src selectively, not `COPY . .`,
+# so this isn't closing an active leak — it guards against a future COPY . . regression.
+# NOTE: this file applies only to a root-context build. The compose services build with each
+# service dir as context (`build: ../rpe-<svc>`), where the per-service .dockerignore governs.
+# Patterns are recursive (`**/`) so the four service target/ trees are covered here too.
+**/target/
+**/build/
+**/out/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+.git/
+.gitignore
+.claude/
+CLAUDE.md
+.env
+*.env
+.env.*
+!.env.example
+!*.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.log
+logs/
+.idea/
+*.iml
+.vscode/
+.DS_Store
+**/.DS_Store
+data/
+**/data/

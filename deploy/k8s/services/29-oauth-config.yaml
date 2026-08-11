@@ -1,0 +1,23 @@
+# Zero-trust Actuator auth (ADR-19) — shared, non-secret OAuth2 Resource Server config.
+# Issuer/JWKS URI/audience are not credentials, so a ConfigMap (not a Secret) is correct here.
+#
+# Fail-closed by design (ADR-19 §4 / actuator-security.md rule 5): rpe.security.oauth2.issuer
+# and jwk-set-uri have NO default in any service's application.yml (${RPE_OAUTH_ISSUER} with no
+# `:default`) — a service boots only once these are non-blank and point at a reachable IdP/JWKS.
+#
+# LAB values point at the in-cluster static JWKS stub (infra/22-jwks-stub.yaml + deploy/oauth/
+# generate-jwks.sh) — this closes the ADR-19 "standing up a local Keycloak or static JWKS"
+# follow-up for the lab topology. The issuer is an exact-string match against the token's `iss`
+# claim (per-service ManagementSecurityConfig), so it must equal mint-jwt.sh's --iss default and
+# it deliberately does not vary with vantage; the JWKS URI is the in-cluster Service DNS name.
+# Production replaces both values with a real IdP (and does not deploy the stub); a blank value
+# restores the fail-closed boot refusal, identically to the compose topology with an unset .env.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rpe-oauth-config
+  namespace: rpe
+data:
+  issuer: "http://rpe-jwks-stub"
+  jwks-uri: "http://jwks-stub.rpe.svc.cluster.local/.well-known/jwks.json"
+  audience: "rpe-actuator"

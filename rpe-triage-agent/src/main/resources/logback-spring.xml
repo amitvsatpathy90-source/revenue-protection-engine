@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Structured JSON logging (RPE-13). RPE's cross-service forensic join rides the masked
+  event_id/account_id (MDC) + the deterministic alert_id + W3C trace/span ids; pattern-layout text
+  leaves those greppable only. This emits them as first-class JSON fields an aggregator can query.
+  Values are masked at write time (Pii / security.md) — no raw PII reaches the sink; MDC is
+  WHITELISTED below so a future MDC.put of an un-masked key cannot silently leak.
+
+  Must be logback-spring.xml (not logback.xml) for <springProfile>/<springProperty> to resolve.
+-->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+    <springProperty scope="context" name="appName" source="spring.application.name" defaultValue="rpe"/>
+
+    <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <customFields>{"service":"${appName}"}</customFields>
+            <fieldNames>
+                <timestamp>ts</timestamp>
+                <version>[ignore]</version>
+            </fieldNames>
+            <!-- Whitelist MDC: ONLY these keys emit (security.md — no accidental future-MDC leak). -->
+            <includeMdcKeyName>event_id</includeMdcKeyName>
+            <includeMdcKeyName>account_id</includeMdcKeyName>
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>spanId</includeMdcKeyName>
+        </encoder>
+    </appender>
+
+    <!-- Human-readable console for local dev (run with -Dspring-boot.run.profiles=dev);
+         JSON everywhere else — containers, CI, prod. -->
+    <springProfile name="dev">
+        <root level="INFO"><appender-ref ref="CONSOLE"/></root>
+    </springProfile>
+    <springProfile name="!dev">
+        <root level="INFO"><appender-ref ref="JSON"/></root>
+    </springProfile>
+</configuration>

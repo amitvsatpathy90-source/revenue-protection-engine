@@ -1,0 +1,47 @@
+### RPE actuator endpoints
+### Base URLs
+@detectionBaseUrl = http://localhost:8080
+@relayBaseUrl = http://localhost:8082
+@alertBaseUrl = http://localhost:8083
+@triageBaseUrl = http://localhost:8081
+
+### Common auth header
+@bearerToken = {{RPE_SCRAPE_JWT}}
+
+### Detection service: liveness
+GET {{detectionBaseUrl}}/actuator/health/liveness
+Accept: application/json
+
+### Detection service: readiness
+GET {{detectionBaseUrl}}/actuator/health/readiness
+Accept: application/json
+
+### Detection service: health (requires auth)
+GET {{detectionBaseUrl}}/actuator/health
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+### Detection service: info (requires auth)
+GET {{detectionBaseUrl}}/actuator/info
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+### Detection service: prometheus (requires auth + metrics:scrape scope)
+GET {{detectionBaseUrl}}/actuator/prometheus
+Accept: text/plain
+Authorization: Bearer {{bearerToken}}
+
+### Relay service: health (requires auth)
+GET {{relayBaseUrl}}/actuator/health
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+### Alert service: health (requires auth)
+GET {{alertBaseUrl}}/actuator/health
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+### Triage service: health (requires auth)
+GET {{triageBaseUrl}}/actuator/health
+Accept: application/json
+Authorization: Bearer {{bearerToken}}

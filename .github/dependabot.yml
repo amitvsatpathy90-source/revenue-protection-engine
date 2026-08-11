@@ -1,0 +1,47 @@
+# Dependabot — dependency + action update PRs. Free (GitHub-hosted).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # No root/parent pom (ADR-17 §3.5: no reactor aggregation), so each service is scanned on its own.
+  # Each bump PR is validated by that service's `mvn -f <svc>/pom.xml verify` in CI before merge.
+  - package-ecosystem: maven
+    directories:
+      - /rpe-detection-service
+      - /rpe-relay-service
+      - /rpe-alert-service
+      - /rpe-triage-agent
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      spring:
+        patterns:
+          - "org.springframework*"
+          - "io.spring*"
+      other:
+        patterns: ["*"]
+        exclude-patterns:
+          - "org.springframework*"
+          - "io.spring*"
+
+  # Unlike the other two repos, these are named exactly `Dockerfile`, so Dependabot's docker
+  # ecosystem picks them up — base-image (eclipse-temurin) bumps land as PRs.
+  - package-ecosystem: docker
+    directories:
+      - /rpe-detection-service
+      - /rpe-relay-service
+      - /rpe-alert-service
+      - /rpe-triage-agent
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      base-images:
+        patterns: ["*"]    

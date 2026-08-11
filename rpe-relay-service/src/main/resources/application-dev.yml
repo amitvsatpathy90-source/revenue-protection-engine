@@ -1,0 +1,7 @@
+# Dev profile for the relay service.
+# The relay has no reactive Redis lane and no Netty event loop, so the BlockHound /
+# reactor-debug-agent dev flags (core's reactive-pipeline concerns) do not apply here.
+# Verbose relay logging only.
+logging:
+  level:
+    io.rpe.relay: DEBUG

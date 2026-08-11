@@ -1,0 +1,243 @@
+server:
+  # Graceful shutdown (ADR-22): Reactor Netty drains in-flight HTTP (actuator/scrape) before
+  # the SmartLifecycle drain phases run. Paired with spring.lifecycle.timeout-per-shutdown-phase.
+  shutdown: graceful
+
+spring:
+  application:
+    # Drives the OTel trace resource service.name (ADR-25), and the Micrometer common tag.
+    name: rpe-detection-service
+  main:
+    web-application-type: reactive
+  # Per-phase cap for the graceful-shutdown SmartLifecycle ordering (Kafka stop → lane drain →
+  # outbox flush → pools). Each component's own bounded deadline (lane 5s, outbox 5s) is smaller,
+  # so this is the upper guard, not the expected wait. k8s terminationGracePeriodSeconds must
+  # exceed the realistic total (ADR-22).
+  lifecycle:
+    timeout-per-shutdown-phase: 25s
+  threads:
+    virtual:
+      enabled: true
+  # Reactor debug agent requires dynamic JVM agent attachment (Java 17+ disables this
+  # by default without --add-opens or -XX:+EnableDynamicAgentLoading). Disable at the
+  # Spring Boot level here; the RPE-level rpe.dev.reactor-debug-agent flag is a separate
+  # opt-in that also controls this, but Spring Boot's ReactorEnvironmentPostProcessor
+  # fires before app context is ready and crashes without this explicit override.
+  reactor:
+    debug-agent:
+      enabled: false
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:19092}
+    producer:
+      # Core's only producer is the non-transactional DLT template (KafkaConfig). The
+      # transactional payment.alerts producer moved to rpe-relay-service (ADR-17 Stage 1),
+      # which carries its own transaction-id-prefix from RELAY_INSTANCE_ID.
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 1
+    consumer:
+      group-id: rpe-consumer
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # Value deserialization is wrapped by ErrorHandlingDeserializer in KafkaConfig
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      properties:
+        # isolation.level is set per-factory in KafkaConfig (alert consumer only)
+        session.timeout.ms: 30000
+        heartbeat.interval.ms: 10000
+        # Explicit poll-lifecycle bound. The lane's BoundedBlockingSubmitPolicy parks the listener
+        # thread on a full queue (backpressure by design), so a sustained backlog can stall the
+        # poll loop; without an explicit interval the 300s default silently evicts the consumer
+        # (rebalance storm) instead of just applying backpressure. 100 records × realistic per-event
+        # work stays well inside 600s, sizing the park budget rather than inheriting it.
+        max.poll.records: 100
+        max.poll.interval.ms: 600000
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # Per-command timeout on the hot path. Without it Lettuce inherits its 60s default, so a
+      # Redis brown-out (responsive TCP, stalled replies — AOF fsync stall / maxmemory pressure)
+      # parks each lane VT up to 60s ×GATE_RETRY before the `redis` CB counts a failure, delaying
+      # the load-shedding open transition by minutes while asyncAcks gap-pause halts the container.
+      # 500ms is >50× the gate's healthy p99; worst case lane occupancy stays ≤1.5s across retries.
+      timeout: 500ms
+      lettuce:
+        pool:
+          max-active: 20
+          max-wait: 200ms
+          min-idle: 2
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/rpe}
+    # Stage 6: connects as detection_role (schema owner). Falls back to 'rpe' for
+    # local dev without k8s (compose still uses the shared rpe user).
+    username: ${DB_USER:detection_role}
+    # Secrets via environment ONLY — no default. Missing env fails startup loudly
+    # instead of silently connecting with a checked-in credential (security rule).
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 2
+      connection-timeout: 5000
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # Stage 6: scope Flyway to the detection schema; separate history table so services
+    # don't corrupt each other's migration state on the shared Postgres (ADR-17 §5.2).
+    schemas: detection
+    table: flyway_schema_history_detection
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized   # ADR-19: component detail only to authenticated scrapers
+      show-components: when-authorized
+      probes:
+        enabled: true  # Boot 4 default is true; explicit so intent is clear
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        rpe.detection.timer: true
+      percentiles:
+        rpe.detection.timer: 0.5,0.95,0.99
+  # Distributed tracing (ADR-25). App-level Micrometer Observation → OTel → OTLP. W3C so the
+  # traceparent persisted on the outbox row (the durable-queue stitch) is the wire format the
+  # relay restores. Fail-open: an unreachable endpoint drops spans on a background exporter
+  # thread, never blocking the hot path.
+  tracing:
+    enabled: true
+    sampling:
+      probability: ${RPE_TRACING_SAMPLE_PROBABILITY:1.0}
+    propagation:
+      type: W3C
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+
+  # Environment properties mapping into /actuator/info
+  info:
+    env:
+      enabled: true
+
+# For non-empty /actuator/info payload
+info:
+  app:
+    name: "rpe-detection-service"
+    description: "Revenue Protection Engine - Detection Service"
+    version: "1.0.0"
+    environment: "${SPRING_PROFILES_ACTIVE:production}"
+    instance: "${HOSTNAME:-unknown-host}"
+  runtime:
+    java-version: "${java.version}"
+    os-name: "${os.name}"
+    os-arch: "${os.arch}"
+
+rpe:
+  # rpe.relay.* moved to rpe-relay-service (ADR-17 §7 Stage 1).
+  security:
+    oauth2:
+      # Zero-trust Actuator auth (ADR-19). Fail-closed: issuer/jwk-set-uri have NO default —
+      # a missing env aborts startup rather than booting an unauthenticated surface.
+      issuer: ${RPE_OAUTH_ISSUER}
+      jwk-set-uri: ${RPE_OAUTH_JWKS_URI}
+      audience: ${RPE_OAUTH_AUDIENCE:rpe-actuator}
+      jwks-connect-timeout-ms: 2000
+      jwks-read-timeout-ms: 2000
+  resilience:
+    redis:
+      buffer-size: 500
+  rate-limiting:
+    default-limit-per-sec: 500
+    elevated-limit-per-sec: 2000
+    # ADR-24 distributed token bucket. key-ttl-ms evicts idle ratelimit:{account} keys (a reset
+    # to a full bucket — safe). acquire-timeout-ms is the throttle-not-drop budget (ADR-03's 5s).
+    key-ttl-ms: 60000
+    acquire-timeout-ms: 5000
+  detection:
+    velocity:
+      window-ms: 60000
+      max-events: 100
+      vel-ttl-ms: 120000
+    z-score:
+      threshold: 3.0
+    geo:
+      max-speed-kmh: 900.0
+      geo-ttl-ms: 86400000
+    welford:
+      sample-cap: 10000
+    dedup:
+      ttl-seconds: 300
+    stats:
+      # ADR-27: sliding idle TTL on stats:{account} (Welford) keys — 30 days, refreshed on every
+      # event. Makes idle-account stats reclaimable (expiry) and evictable (volatile-lru) instead
+      # of accumulating unevictably toward the noeviction write-error wedge. Loss consequence is
+      # bounded: the account re-enters the <30-sample z-score gate.
+      ttl-ms: 2592000000
+  dev:
+    blockhound:
+      enabled: false
+    reactor-debug-agent: false
+    # VT pinning trace is JVM-arg only (-Djdk.tracePinnedThreads=full) — no Spring property
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      redis:
+        registerHealthIndicator: true
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+        permittedNumberOfCallsInHalfOpenState: 3
+        # Gate contract violations are per-event deterministic — NOT Redis health.
+        # Counting them would open the CB and buffer events that will fail again;
+        # they must flow to DLT instead (ADR-14).
+        ignoreExceptions:
+          - io.rpe.redis.GateContractViolation
+        # MANDATORY for the C+D fallback (ADR-02): once this breaker opens, the fallback
+        # buffers events WITHOUT calling the gate, so nothing ever attempts a permission
+        # again — and R4j's OPEN→HALF_OPEN transition is lazy by default ("only happens
+        # if a call is made"). Lazy transition + traffic-stopping fallback = mutual wait:
+        # buffer fills → consumer pauses → zero probes forever → detection wedges
+        # PERMANENTLY (Redis recovering does not un-wedge it). Automatic transition fires
+        # OPEN_TO_HALF_OPEN on schedule, which is what triggers the drain. Pinned by
+        # RedisCircuitBreakerAutoTransitionTest.
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+      # ADR-24: distinct from `redis` so a rate-limit hiccup never opens the gate CB. When open,
+      # CallNotPermittedException short-circuits each acquire → immediate degrade to the local
+      # limiter (no Redis round-trip). Fewer calls in the window than the gate (1 op vs 4).
+      ratelimit:
+        registerHealthIndicator: true
+        slidingWindowSize: 20
+        minimumNumberOfCalls: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+        permittedNumberOfCallsInHalfOpenState: 3
+  bulkhead:
+    instances:
+      redis:
+        maxConcurrentCalls: 40
+        maxWaitDuration: 50ms
+      postgres:
+        maxConcurrentCalls: 20
+        maxWaitDuration: 100ms
+      # ADR-24: bound concurrent token-bucket round-trips independently of the gate.
+      ratelimit:
+        maxConcurrentCalls: 40
+        maxWaitDuration: 50ms

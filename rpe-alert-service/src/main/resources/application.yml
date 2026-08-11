@@ -1,0 +1,82 @@
+server:
+  port: 8083
+  # Graceful shutdown (ADR-22): Tomcat drains in-flight HTTP; the Kafka container's stop()
+  # already awaits the synchronous in-flight consume() (insert → ack) before terminating.
+  shutdown: graceful
+
+spring:
+  # Per-phase cap for graceful-shutdown ordering. The in-flight insert blocks up to 30s
+  # (AlertConsumer), so keep this above it.
+  lifecycle:
+    timeout-per-shutdown-phase: 35s
+  application:
+    name: rpe-alert-service
+  threads:
+    virtual:
+      enabled: true
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:19092}
+    consumer:
+      group-id: rpe-alert-consumer
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # Value deserialization is wrapped by ErrorHandlingDeserializer in AlertKafkaConfig.
+      # isolation.level=read_committed is set per-factory there (immutable constraint).
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/rpe}
+    # Stage 6: connects as alert_role (schema owner of 'alert'). search_path=alert is
+    # set by ALTER ROLE in 12-bootstrap-grants.yaml — 'processed_alerts' stays unqualified.
+    username: ${DB_USER:alert_role}
+    # Secrets via environment ONLY — no default; startup fails fast (security rule).
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 5000
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    schemas: alert
+    # Separate history table per service — shared DB, no state corruption (ADR-17 §5.2).
+    table: flyway_schema_history_alert
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized   # ADR-19: detail only to authenticated scrapers
+      show-components: when-authorized
+      probes:
+        enabled: true
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  # Distributed tracing (ADR-25). The alert consumer auto-continues the trace from the
+  # payment.alerts traceparent header. W3C to match; fail-open on an unreachable endpoint.
+  tracing:
+    enabled: true
+    sampling:
+      probability: ${RPE_TRACING_SAMPLE_PROBABILITY:1.0}
+    propagation:
+      type: W3C
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+
+rpe:
+  security:
+    oauth2:
+      # Zero-trust Actuator auth (ADR-19). Fail-closed — no default for issuer/jwk-set-uri.
+      issuer: ${RPE_OAUTH_ISSUER}
+      jwk-set-uri: ${RPE_OAUTH_JWKS_URI}
+      audience: ${RPE_OAUTH_AUDIENCE:rpe-actuator}
+      jwks-connect-timeout-ms: 2000
+      jwks-read-timeout-ms: 2000

@@ -1,0 +1,9 @@
+triage:
+  dev:
+    # Dev-only prompt logging to the local log sink (logger "triage.prompt.dev").
+    # Prompts contain event data — never enable outside a local dev profile.
+    log-prompts: true
+
+logging:
+  level:
+    triage.prompt.dev: DEBUG

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Cross-POM pin alignment. The four service POMs are standalone by design (ADR-17 §3.5); Renovate opens one PR per dependency and updates every pom.xml that declares it, so pins stay aligned on upgrade. scripts/check-pin-drift.py (ci.yml pin-drift job) is the enforcement backstop for manual edits.",
+  "extends": ["config:recommended"],
+  "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "description": "Batch patch+minor into one weekly PR — one-operator review load",
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "non-major dependencies",
+      "schedule": ["before 6am on monday"]
+    },
+    {
+      "description": "Majors stay individual PRs — Boot/Spring AI bumps need the repo's verify-before-build pass",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    }
+  ]
+}

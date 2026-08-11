@@ -1,0 +1,11 @@
+# RPE Stage 6 — single namespace for all four services + their shared platform.
+# Logical isolation inside the namespace is enforced by:
+#   - per-service Postgres roles + schemas + scoped GRANTs (db/), and
+#   - default-deny NetworkPolicies (netpol/).
+# (ADR-17 §5.3 / §7 Stage 6 — production-path reference; see deploy/k8s/README.md.)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rpe
+  labels:
+    app.kubernetes.io/part-of: rpe

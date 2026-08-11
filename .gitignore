@@ -1,0 +1,88 @@
+# --- Secrets / credentials / tokens (security.md / infra-config.md: secrets via environment only) ---
+.env
+*.env
+.env.*
+!.env.example
+!*.env.example
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+id_ecdsa*
+*.token
+*_token
+*.credentials
+credentials.json
+# Lab JWKS stub material (ADR-19; deploy/oauth/generate-jwks.sh) — script versioned, output
+# regenerable. *.pem above already catches the keys; the derived public JWK Set is ignored too.
+deploy/oauth/keys/
+deploy/oauth/public/
+.npmrc
+.netrc
+*.pgpass
+.pgpass
+
+# --- PII / local scratch data (DB dumps may contain real payment-event data) ---
+*.dump
+*.sql.gz
+*.pgdump
+
+# --- Build output ---
+target/
+build/
+out/
+dist/
+*.class
+*.war
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+node_modules/
+
+# --- Logs ---
+*.log
+logs/
+hs_err_pid*.log
+replay_pid*.log
+
+# --- IDE / editor ---
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# --- OS caches ---
+.DS_Store
+**/.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# --- AI context files: PRIVATE to this portfolio project, never published to the ---
+# --- public repo (uploaded to the chat knowledge base for AI context instead). Whole .claude/ ---
+# --- dir (rules + local settings) + the CLAUDE.md context file. ---
+.claude/
+CLAUDE.md
+
+# --- Local data-volume dirs (compose-mounted persistence) ---
+data/
+**/data/
+pgdata/
+redis-data/
+redpanda-data/
+grafana-data/
+prometheus-data/
+
+# Wildcard pattern to catch private env files in any subfolder/nested services
+*.private.env.json

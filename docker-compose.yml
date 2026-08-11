@@ -1,0 +1,207 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# RPE — single-host all-in-one DEV convenience stack.
+#
+# This is NOT the canonical deployment topology. It runs shared infra (Redpanda,
+# Redis, Postgres, Prometheus, Grafana) + the advisory triage profile; the detection
+# service runs on the HOST via `mvn -f rpe-detection-service/pom.xml spring-boot:run`
+# (Prometheus scrapes it at host.docker.internal:8080 — see monitoring/prometheus.yml).
+#
+# The CANONICAL four-service topology (ADR-17 §7 Stage 5), where every service runs as
+# its own container, is deploy/docker-compose.services.yml:
+#   docker compose --env-file .env -f deploy/docker-compose.services.yml up -d
+# ──────────────────────────────────────────────────────────────────────────────
+services:
+
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.1.11
+    mem_limit: 512m
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --smp 1
+      - --memory 400M
+      - --mode dev-container
+      - --default-log-level=warn
+    ports:
+      - "19092:19092"
+      - "18082:18082"
+      - "18081:18081"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+
+  redpanda-init:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.1.11
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        rpk topic create payment.events --partitions 12 --replication-factor 1 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts --partitions 3 --replication-factor 1 --brokers redpanda:9092 || true
+        # DLT + parked retention is PINNED (14d) with segment.ms (1d), not broker-default: retention
+        # deletes only ROLLED segments, and DLTs are low-volume, so an unrolled active segment makes
+        # the default window unreliable in both directions. The dedup-guard contract (System Invariants
+        # Known Limitations): processed_alerts purge (30d) > DLT+parked retention (14d) + re-drive latency.
+        rpk topic create payment.events.DLT --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts.DLT --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts.triage.DLT --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts.triaged --partitions 3 --replication-factor 1 --brokers redpanda:9092 || true
+        # Re-drive parking topics (ADR-23): records that re-poisoned past the attempt cap land here.
+        # Same pinned retention: parking is quarantine with a KNOWN window — RpeDltParked pages at
+        # for:0m so the fix-vs-discard decision happens inside these 14 days.
+        rpk topic create payment.events.DLT.parked --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts.DLT.parked --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts.triage.DLT.parked --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        echo "Topics ready."
+    restart: "no"
+
+  redis:
+    image: redis:7.2.5
+    mem_limit: 128m
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 96mb
+      --maxmemory-policy volatile-lru
+      --save ""
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:16.3
+    mem_limit: 256m
+    environment:
+      POSTGRES_DB: rpe
+      POSTGRES_USER: rpe
+      # No default — `cp .env.example .env` first; compose fails fast if unset
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rpe -d rpe"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Lab IdP stub (ADR-19): serves the static JWKS. Host-run services (the dev workflow:
+  # `mvn spring-boot:run` on the host) use http://localhost:9001/.well-known/jwks.json;
+  # in-network containers (triage profile) use http://jwks-stub/.well-known/jwks.json.
+  # One-time: deploy/oauth/generate-jwks.sh (output git-ignored). Only deploy/oauth/public/
+  # is mounted — the signing key in deploy/oauth/keys/ must never be served.
+  jwks-stub:
+    image: nginx:1.27-alpine
+    mem_limit: 32m
+    volumes:
+      - ./deploy/oauth/public:/usr/share/nginx/html/.well-known:ro
+    ports:
+      - "9001:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/.well-known/jwks.json >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+
+  # Advisory AI triage (ADR-15) — opt-in: docker compose --profile triage up -d
+  # Second deployable on an 8GB host: do not run concurrently with load benchmarks.
+  triage-agent:
+    build: ./rpe-triage-agent
+    profiles: ["triage"]
+    mem_limit: 512m
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      DB_URL: jdbc:postgresql://postgres:5432/rpe
+      DB_USER: rpe
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      # Sentinel default is NOT a credential: without a real key the module runs in
+      # designed degraded mode (DEGRADED_RULE_BASED verdicts) — ADR-15 §3.7
+      SPRING_AI_OPENAI_API_KEY: ${SPRING_AI_OPENAI_API_KEY:-llm-disabled-sentinel}
+      TRIAGE_LLM_RPM: ${TRIAGE_LLM_RPM:-30}
+      # Zero-trust Actuator auth (ADR-19) — the app is fail-closed (no in-app default), so this
+      # block was MISSING and `--profile triage` crashlooped at boot since ADR-19 landed. Dev
+      # defaults point at the in-network lab stub above (deploy/oauth/generate-jwks.sh first);
+      # a real IdP overrides via .env. The canonical deploy compose stays `:?` fail-closed.
+      RPE_OAUTH_ISSUER: ${RPE_OAUTH_ISSUER:-http://rpe-jwks-stub}
+      RPE_OAUTH_JWKS_URI: ${RPE_OAUTH_JWKS_URI:-http://jwks-stub/.well-known/jwks.json}
+      RPE_OAUTH_AUDIENCE: ${RPE_OAUTH_AUDIENCE:-rpe-actuator}
+    ports:
+      - "8081:8081"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health | grep -q UP || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    mem_limit: 256m
+    # prometheus.yml's scrape jobs read a bearer token from /etc/prometheus/scrape_token
+    # (ADR-19: /actuator/prometheus needs scope metrics:scrape; mint the token with
+    # deploy/oauth/mint-jwt.sh --ttl 2592000 and set RPE_PROM_SCRAPE_TOKEN in .env).
+    # Lenient here on purpose (dev convenience): unset token -> empty file -> scrapes 401,
+    # the same observable outcome as the pre-auth config, instead of blocking infra-only
+    # bring-up. The canonical deploy compose is `:?` fail-closed on the same variable.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        printf '%s' "${RPE_PROM_SCRAPE_TOKEN:-}" > /etc/prometheus/scrape_token
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/rules:/etc/prometheus/rules:ro
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana:10.4.3
+    mem_limit: 256m
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?set GRAFANA_PASSWORD in .env}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    # Mounts rpe-overview.json
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

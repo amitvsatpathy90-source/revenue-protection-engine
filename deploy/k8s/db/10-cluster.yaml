@@ -1,0 +1,66 @@
+# CloudNativePG cluster — the ONE shared Postgres for all four services (ADR-17 §5.2:
+# strict DB-per-service is a non-goal; the transactional outbox requires detection
+# (writer) and relay (reader) to share `outbox` in one database, and LISTEN/NOTIFY is
+# per-database). Isolation is LOGICAL: per-service schema + login role + scoped GRANTs
+# (ADR-17 §5.3), NOT separate clusters.
+#
+# HA topology: 1 primary + 1 hot-standby replica with synchronous streaming. On a single
+# OrbStack node this is NOT real fault tolerance (both replicas share the node) — it
+# exercises the failover *machinery*, not its guarantee. See deploy/k8s/README.md.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: rpe-pg
+  namespace: rpe
+spec:
+  instances: 2
+  # Pinned to match the artifact's compose Postgres (16.3) — no :latest (infra-config.md).
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.3
+
+  # Superuser secret (rpe-pg-superuser) is needed by the one-time bootstrap Job to
+  # transfer schema ownership and set per-role search_path (DDL the service roles
+  # themselves are intentionally NOT privileged to do).
+  enableSuperuserAccess: true
+
+  primaryUpdateStrategy: unsupervised
+
+  storage:
+    size: 1Gi
+    storageClass: local-path
+
+  bootstrap:
+    initdb:
+      database: rpe
+      owner: rpe_app          # app-db owner; services do NOT connect as this role
+      postInitApplicationSQL:
+        # Schemas created here (as rpe_app). Ownership + search_path + cross-schema
+        # USAGE are applied by the bootstrap Job once the managed roles exist.
+        - CREATE SCHEMA IF NOT EXISTS detection
+        - CREATE SCHEMA IF NOT EXISTS alert
+        - CREATE SCHEMA IF NOT EXISTS triage
+
+  # One login role per service, password sourced from a per-service Secret (basic-auth:
+  # username MUST equal the role name). NO shared 'rpe' superuser for any service
+  # (rule #1). relay_role owns no schema — it only reads detection's published `outbox`.
+  managed:
+    roles:
+      - name: detection_role
+        ensure: present
+        login: true
+        passwordSecret:
+          name: rpe-detection-db
+      - name: relay_role
+        ensure: present
+        login: true
+        passwordSecret:
+          name: rpe-relay-db
+      - name: alert_role
+        ensure: present
+        login: true
+        passwordSecret:
+          name: rpe-alert-db
+      - name: triage_role
+        ensure: present
+        login: true
+        passwordSecret:
+          name: rpe-triage-db

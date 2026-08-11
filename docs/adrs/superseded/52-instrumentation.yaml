@@ -1,0 +1,54 @@
+---
+# OTel Instrumentation CR — Java auto-instrumentation via OTel Operator.
+#
+# ⚠ SUPERSEDED by ADR-25 — RETAINED FOR REFERENCE, NOT ACTIVE.
+# The four service Deployments no longer carry the `instrumentation.opentelemetry.io/inject-java`
+# annotation, so this CR injects nothing. App-level Micrometer Observation tracing is now the
+# single source of truth: only in-code instrumentation can carry trace context across the outbox
+# durable-queue hop (the agent sees detection's INSERT and the relay's SELECT as unrelated ops),
+# and it is uniform across compose/test/dev/k8s + testable in `mvn verify`. The apps export OTLP
+# straight to the collector (`OTEL_EXPORTER_OTLP_ENDPOINT` on each Deployment). Running BOTH would
+# double-instrument the Kafka/JDBC spans. This file is kept only to document the rejected approach
+# and as a ready toggle for non-Java sidecars; re-adding the annotation is a deliberate, separate
+# decision. Do NOT re-enable alongside the app-level stack.
+#
+# PII / cardinality rules (security.md + ADR-15 §6) — still apply to the app-level spans:
+#   - NEVER export account_id or any PII as span attribute or metric tag
+#   - Tag by rule_type / outcome only (collector's attributes/pii-suppress does belt-and-suspenders)
+#   - db.statement capture disabled (SQL may include account_id in WHERE clauses)
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: rpe-instrumentation
+  namespace: rpe
+spec:
+  exporter:
+    endpoint: http://rpe-otel-collector.rpe.svc.cluster.local:4317
+  propagators:
+    - tracecontext
+    - baggage
+    - b3
+  sampler:
+    # 10% sampling — lab portfolio; in production tie to traffic volume
+    type: parentbased_traceidratio
+    argument: "0.1"
+  java:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:2.15.0
+    env:
+      # PII: disable db.statement capture (SQL may expose account_id in WHERE clauses)
+      - name: OTEL_INSTRUMENTATION_JDBC_STATEMENT_SANITIZER_ENABLED
+        value: "true"
+      - name: OTEL_INSTRUMENTATION_JDBC_STATEMENT_MAX_LENGTH
+        value: "0"
+      # Never put account_id in span tags (security.md)
+      - name: OTEL_INSTRUMENTATION_MESSAGING_EXPERIMENTAL_CAPTURE_HEADERS
+        value: "false"
+      # Resource attributes: service name comes from OTEL_SERVICE_NAME (set per-pod via downward API)
+      - name: OTEL_RESOURCE_ATTRIBUTES
+        value: "deployment.environment=k8s-lab"
+      # Log correlation: inject trace/span IDs into MDC (safe — not PII)
+      - name: OTEL_LOGS_EXPORTER
+        value: "none"
+      # Metrics via application actuator → Prometheus; no OTLP metrics from agent
+      - name: OTEL_METRICS_EXPORTER
+        value: "none"

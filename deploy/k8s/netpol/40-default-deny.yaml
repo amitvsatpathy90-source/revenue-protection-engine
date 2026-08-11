@@ -1,0 +1,21 @@
+# Default-deny all ingress AND egress in the rpe namespace.
+# Every legitimate path must be explicitly opened by a subsequent NetworkPolicy.
+# This enforces ADR-17's "inter-service communication is Kafka-only and async" rule
+# at the network layer — no service can synchronously call another.
+#
+# ENFORCEMENT NOTE: NetworkPolicy enforcement requires a CNI that supports it.
+# OrbStack's built-in CNI (flannel) accepts NetworkPolicy objects but does NOT enforce
+# them on a single-node cluster. These manifests are the production-path reference;
+# run `kubectl run -i netpol-probe ...` tests (see deploy/k8s/README.md) to verify
+# enforcement in your target environment before claiming isolation.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: rpe
+spec:
+  podSelector: {}    # matches ALL pods in the namespace
+  policyTypes:
+    - Ingress
+    - Egress

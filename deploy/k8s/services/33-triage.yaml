@@ -1,0 +1,134 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rpe-triage-agent
+  namespace: rpe
+  labels:
+    app: rpe-triage-agent
+    app.kubernetes.io/part-of: rpe
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rpe-triage-agent
+  template:
+    metadata:
+      labels:
+        app: rpe-triage-agent
+      # ADR-25: OTel Java agent removed — app-level Micrometer tracing exports OTLP (see env).
+      # Also lets Spring AI's observation-aware model emit the gen_ai LLM span natively.
+    spec:
+      # Graceful shutdown (ADR-22): preStop(5s) + the in-flight process() (≤12s LLM TimeLimiter) + margin.
+      terminationGracePeriodSeconds: 45
+      # Pod-level hardening (arch-audit F-01) — same uid/rationale as 30-detection.yaml.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: triage
+          image: rpe-triage-agent:latest
+          imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          lifecycle:
+            preStop:
+              # Endpoint-deregistration window; the Kafka container then drains the in-flight process() (ADR-22).
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 512Mi
+          ports:
+            - containerPort: 8081
+              name: http
+          env:
+            # ADR-25: app-level OTLP trace export to the Stage-6 collector → Tempo pipeline.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://rpe-otel-collector.rpe.svc.cluster.local:4318/v1/traces
+            # Zero-trust Actuator auth (ADR-19) — fail-closed, no default in application.yml.
+            - name: RPE_OAUTH_ISSUER
+              valueFrom:
+                configMapKeyRef:
+                  name: rpe-oauth-config
+                  key: issuer
+            - name: RPE_OAUTH_JWKS_URI
+              valueFrom:
+                configMapKeyRef:
+                  name: rpe-oauth-config
+                  key: jwks-uri
+            - name: RPE_OAUTH_AUDIENCE
+              valueFrom:
+                configMapKeyRef:
+                  name: rpe-oauth-config
+                  key: audience
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: redpanda.rpe.svc.cluster.local:9092
+            - name: REDIS_HOST
+              value: redis.rpe.svc.cluster.local
+            - name: REDIS_PORT
+              value: "6379"
+            - name: DB_URL
+              value: jdbc:postgresql://rpe-pg-rw.rpe.svc.cluster.local:5432/rpe
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rpe-triage-db
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rpe-triage-db
+                  key: password
+            # Sentinel default — module starts in DEGRADED_RULE_BASED mode without a
+            # real key (ADR-15 §9). Real key from env/Vault in production.
+            - name: SPRING_AI_OPENAI_API_KEY
+              value: llm-disabled-sentinel
+            - name: TRIAGE_LLM_RPM
+              value: "30"
+            # temurin's default HOME is unwritable under readOnlyRootFilesystem (arch-audit F-01).
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rpe-triage-agent
+  namespace: rpe
+  labels:
+    app: rpe-triage-agent
+spec:
+  selector:
+    app: rpe-triage-agent
+  ports:
+    - port: 8081
+      targetPort: 8081
+      name: http

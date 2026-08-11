@@ -1,0 +1,322 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# RPE — CANONICAL microservices deployment topology (ADR-17 §7 Stage 5).
+#
+# All four service modules now exist and build independently; this is the live
+# four-service topology, not a future target. Each service is its own build context:
+#
+#   ../rpe-detection-service  — Stage 3 (Redis + outbox writer + HTTP/actuator).
+#   ../rpe-relay-service      — Stage 1 (outbox reader → payment.alerts, exactly-once).
+#   ../rpe-alert-service      — Stage 2 (payment.alerts → processed_alerts).
+#   ../rpe-triage-agent       — ADR-15 (advisory LLM enrichment → payment.alerts.triaged).
+#
+# Run from the repo root; --env-file is explicit because `-f deploy/…` makes deploy/
+# the compose project dir, so .env in the repo root is not auto-discovered:
+#   docker compose --env-file .env -f deploy/docker-compose.services.yml up -d
+#
+# Run a single service in isolation (independent-deployability check, rules §4), e.g.:
+#   docker compose --env-file .env -f deploy/docker-compose.services.yml up -d postgres redpanda redis rpe-relay-service
+#
+# The repo-root `docker compose up -d` remains the all-in-one DEV convenience (infra +
+# detection-on-host via mvn + triage profile) — not this canonical topology.
+#
+# Memory: the full topology exceeds the 8GB lab host comfortably — do NOT run it
+# alongside load benchmarks (same constraint as ADR-15 for triage).
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ════════════════════════ Shared infrastructure ════════════════════════
+  # One physical Postgres / Redis / Kafka. Logical isolation is by single-writer
+  # table ownership + contract-grade access (ADR-17 §3.4), NOT DB-per-service.
+  # Production isolation path: per-service schema + scoped GRANTs (ADR-17 §5.3).
+
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.1.11
+    mem_limit: 512m
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --smp 1
+      - --memory 400M
+      - --mode dev-container
+      - --default-log-level=warn
+    ports:
+      - "19092:19092"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+
+  redpanda-init:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.1.11
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        rpk topic create payment.events --partitions 12 --replication-factor 1 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts --partitions 3 --replication-factor 1 --brokers redpanda:9092 || true
+        # DLT + parked retention is PINNED (14d) with segment.ms (1d), not broker-default: retention
+        # deletes only ROLLED segments, and DLTs are low-volume, so an unrolled active segment makes
+        # the default window unreliable in both directions. The dedup-guard contract (Architecture Spec
+        # Known Limitations): processed_alerts purge (30d) > DLT+parked retention (14d) + re-drive latency.
+        rpk topic create payment.events.DLT --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts.DLT --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts.triage.DLT --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts.triaged --partitions 3 --replication-factor 1 --brokers redpanda:9092 || true
+        # Re-drive parking topics (ADR-23): records that re-poisoned past the attempt cap land here.
+        # Same pinned retention: parking is quarantine with a KNOWN window — RpeDltParked pages at
+        # for:0m so the fix-vs-discard decision happens inside these 14 days.
+        rpk topic create payment.events.DLT.parked --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts.DLT.parked --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts.triage.DLT.parked --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        echo "Topics ready."
+    restart: "no"
+
+  redis:
+    image: redis:7.2.5
+    mem_limit: 128m
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 96mb
+      --maxmemory-policy volatile-lru
+      --save ""
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:16.3
+    mem_limit: 256m
+    environment:
+      POSTGRES_DB: rpe
+      POSTGRES_USER: rpe
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rpe -d rpe"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Lab IdP stub (ADR-19): serves the static JWKS that all four services' RPE_OAUTH_JWKS_URI
+  # points at (in-network: http://jwks-stub/.well-known/jwks.json; host: http://localhost:9001/...).
+  # One-time key generation: deploy/oauth/generate-jwks.sh (output git-ignored); mint the
+  # Prometheus scrape token with deploy/oauth/mint-jwt.sh --ttl 2592000. Only deploy/oauth/public/
+  # is mounted — the signing key in deploy/oauth/keys/ must never be served. The healthcheck
+  # fetches the JWKS itself, so "healthy" <=> the key material is actually present.
+  jwks-stub:
+    image: nginx:1.27-alpine
+    mem_limit: 32m
+    volumes:
+      - ./oauth/public:/usr/share/nginx/html/.well-known:ro
+    ports:
+      - "9001:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/.well-known/jwks.json >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+
+  # ════════════════════════ Service 1: detection ════════════════════════
+  # Ingest + atomic Lua gate + Detectors + outbox WRITER + HTTP/actuator surface.
+  # Owns: all Redis keys, outbox rows. Runs with all peers absent (outbox accrues).
+  rpe-detection-service:
+    build: ../rpe-detection-service          # created at ADR-17 §7 Stage 3
+    mem_limit: 512m
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      # currentSchema pins detection's unqualified `outbox`/etc. SQL onto the `detection` schema
+      # Flyway migrates into (schemas: detection, application.yml). Without it, unqualified SQL has
+      # no schema beyond `public` on its search_path and fails with "relation does not exist" — the
+      # k8s topology avoids this via a per-role ALTER ROLE ... SET search_path
+      # (deploy/k8s/db/12-bootstrap-grants.yaml); compose has no equivalent, so it goes here instead.
+      DB_URL: jdbc:postgresql://postgres:5432/rpe?currentSchema=detection
+      DB_USER: rpe
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      RPE_KAFKA_SECURITY_PROTOCOL: ${RPE_KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}
+      RPE_KAFKA_SECURITY_SASL_MECHANISM: ${RPE_KAFKA_SECURITY_SASL_MECHANISM:-SCRAM-SHA-512}
+      RPE_OAUTH_ISSUER: ${RPE_OAUTH_ISSUER:?set RPE_OAUTH_ISSUER in .env (ADR-19 fail-closed)}
+      RPE_OAUTH_JWKS_URI: ${RPE_OAUTH_JWKS_URI:?set RPE_OAUTH_JWKS_URI in .env (ADR-19 fail-closed)}
+      RPE_OAUTH_AUDIENCE: ${RPE_OAUTH_AUDIENCE:-rpe-actuator}
+    ports:
+      - "8080:8080"
+    depends_on:
+      redpanda:    { condition: service_healthy }
+      postgres:    { condition: service_healthy }
+      redis:       { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health/readiness | grep -q UP || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
+  # ════════════════════════ Service 2: relay ════════════════════════
+  # outbox (PENDING) → payment.alerts, Kafka-transactional, exactly-once.
+  # Owns: outbox status transitions only. No Redis. Runs with detection absent
+  # (drains existing PENDING rows). RELAY_INSTANCE_ID MUST be unique per instance
+  # (ADR-06) — to scale out, template a distinct id per replica, never share it.
+  rpe-relay-service:
+    build: ../rpe-relay-service              # created at ADR-17 §7 Stage 1
+    mem_limit: 256m
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      # relay owns no Flyway migrations of its own — it only reads/updates the `outbox` table,
+      # which lives in detection's schema (rpe-detection-service/application.yml: schemas: detection).
+      # currentSchema must therefore point at detection's schema, not relay's own name.
+      DB_URL: jdbc:postgresql://postgres:5432/rpe?currentSchema=detection
+      DB_USER: rpe
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      RELAY_INSTANCE_ID: ${RELAY_INSTANCE_ID:-relay-1}   # unique per instance — never shared (ADR-06)
+      RPE_KAFKA_SECURITY_PROTOCOL: ${RPE_KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}
+      RPE_KAFKA_SECURITY_SASL_MECHANISM: ${RPE_KAFKA_SECURITY_SASL_MECHANISM:-SCRAM-SHA-512}
+      RPE_OAUTH_ISSUER: ${RPE_OAUTH_ISSUER:?set RPE_OAUTH_ISSUER in .env (ADR-19 fail-closed)}
+      RPE_OAUTH_JWKS_URI: ${RPE_OAUTH_JWKS_URI:?set RPE_OAUTH_JWKS_URI in .env (ADR-19 fail-closed)}
+      RPE_OAUTH_AUDIENCE: ${RPE_OAUTH_AUDIENCE:-rpe-actuator}
+    ports:
+      - "8082:8082"
+    depends_on:
+      redpanda:    { condition: service_healthy }
+      postgres:    { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/actuator/health | grep -q UP || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
+  # ════════════════════════ Service 3: alert-actioning ════════════════════════
+  # payment.alerts → processed_alerts (ON CONFLICT DO NOTHING; idempotent via UUIDv5).
+  # Owns: processed_alerts. read_committed isolation (immutable constraint). No Redis.
+  rpe-alert-service:
+    build: ../rpe-alert-service              # created at ADR-17 §7 Stage 2
+    mem_limit: 256m
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      # Pins onto the `alert` schema Flyway migrates into (schemas: alert, application.yml) —
+      # same reasoning as detection's DB_URL above.
+      DB_URL: jdbc:postgresql://postgres:5432/rpe?currentSchema=alert
+      DB_USER: rpe
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      RPE_KAFKA_SECURITY_PROTOCOL: ${RPE_KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}
+      RPE_KAFKA_SECURITY_SASL_MECHANISM: ${RPE_KAFKA_SECURITY_SASL_MECHANISM:-SCRAM-SHA-512}
+      RPE_OAUTH_ISSUER: ${RPE_OAUTH_ISSUER:?set RPE_OAUTH_ISSUER in .env (ADR-19 fail-closed)}
+      RPE_OAUTH_JWKS_URI: ${RPE_OAUTH_JWKS_URI:?set RPE_OAUTH_JWKS_URI in .env (ADR-19 fail-closed)}
+      RPE_OAUTH_AUDIENCE: ${RPE_OAUTH_AUDIENCE:-rpe-actuator}
+    ports:
+      - "8083:8083"
+    depends_on:
+      redpanda:    { condition: service_healthy }
+      postgres:    { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8083/actuator/health | grep -q UP || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
+  # ════════════════════════ Service 4: triage (ADR-15) ════════════════════════
+  # payment.alerts → payment.alerts.triaged (advisory LLM enrichment). Owns:
+  # triaged_alerts. Reads processed_alerts + Redis READ-ONLY via @Tool methods.
+  # Runs degraded (DEGRADED_RULE_BASED) with the LLM and all peers absent.
+  rpe-triage-agent:
+    build: ../rpe-triage-agent               # EXISTS today
+    mem_limit: 512m
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      # Two schemas on the search_path, matching deploy/k8s/db/12-bootstrap-grants.yaml's
+      # `ALTER ROLE triage_role SET search_path = triage, alert`: triage writes `triaged_alerts`
+      # (its own `triage` schema) and reads `processed_alerts` (TriageTools.java /
+      # TriagedVerdictPublisher.java — owned by the `alert` schema). pgjdbc's currentSchema accepts
+      # a comma-separated list and sets search_path from it, same as the ALTER ROLE above.
+      DB_URL: jdbc:postgresql://postgres:5432/rpe?currentSchema=triage,alert
+      DB_USER: rpe
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      # Sentinel default is NOT a credential: without a real key the module runs in
+      # designed degraded mode (DEGRADED_RULE_BASED verdicts) — ADR-15 §3.7
+      SPRING_AI_OPENAI_API_KEY: ${SPRING_AI_OPENAI_API_KEY:-llm-disabled-sentinel}
+      TRIAGE_LLM_RPM: ${TRIAGE_LLM_RPM:-30}
+      RPE_KAFKA_SECURITY_PROTOCOL: ${RPE_KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}
+      RPE_KAFKA_SECURITY_SASL_MECHANISM: ${RPE_KAFKA_SECURITY_SASL_MECHANISM:-SCRAM-SHA-512}
+      RPE_OAUTH_ISSUER: ${RPE_OAUTH_ISSUER:?set RPE_OAUTH_ISSUER in .env (ADR-19 fail-closed)}
+      RPE_OAUTH_JWKS_URI: ${RPE_OAUTH_JWKS_URI:?set RPE_OAUTH_JWKS_URI in .env (ADR-19 fail-closed)}
+      RPE_OAUTH_AUDIENCE: ${RPE_OAUTH_AUDIENCE:-rpe-actuator}
+    ports:
+      - "8081:8081"
+    depends_on:
+      redpanda:    { condition: service_healthy }
+      postgres:    { condition: service_healthy }
+      redis:       { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health | grep -q UP || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
+  # ════════════════════════ Observability ════════════════════════
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    mem_limit: 256m
+    # prometheus.services.yml's four scrape jobs each read a bearer token from
+    # /etc/prometheus/scrape_token (ADR-19) — nothing previously created that file, so every scrape
+    # failed to load its credentials and all four service targets sat DOWN. entrypoint materializes
+    # it from RPE_PROM_SCRAPE_TOKEN before starting Prometheus, same source the app services already
+    # require via RPE_OAUTH_*. Value must be a JWT bearing scope metrics:scrape, or scrapes 401
+    # instead of failing to load credentials — an auth failure either way, now for the right reason.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        printf '%s' "${RPE_PROM_SCRAPE_TOKEN:?set RPE_PROM_SCRAPE_TOKEN in .env}" > /etc/prometheus/scrape_token
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml
+    volumes:
+      # Canonical scrape config: all four services by container DNS (Stage 5).
+      - ../monitoring/prometheus.services.yml:/etc/prometheus/prometheus.yml:ro
+      # DLT operational alert rules (ADR-23).
+      - ../monitoring/rules:/etc/prometheus/rules:ro
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana:10.4.3
+    mem_limit: 256m
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?set GRAFANA_PASSWORD in .env}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

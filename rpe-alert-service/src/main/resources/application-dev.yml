@@ -1,0 +1,6 @@
+# Dev profile for the alert service.
+# No reactive Redis lane / Netty event loop here, so the core's BlockHound /
+# reactor-debug-agent dev flags do not apply. Verbose alert logging only.
+logging:
+  level:
+    io.rpe.alert: DEBUG

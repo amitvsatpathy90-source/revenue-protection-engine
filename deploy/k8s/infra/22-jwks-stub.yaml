@@ -1,0 +1,79 @@
+# Lab IdP stub (ADR-19) — the in-cluster static JWKS server every service's fail-closed
+# OAuth2 Resource Server config points at (29-oauth-config.yaml). This closes the "does NOT
+# fabricate an IdP" follow-up for the LAB topology; production replaces the ConfigMap values
+# with a real IdP and never deploys this stub.
+#
+# The JWK Set itself is GENERATED, per-machine, git-ignored material (deploy/oauth/
+# generate-jwks.sh — same posture as the blank rpe-prometheus-scrape-token Secret in
+# 54-prometheus.yaml), so it cannot be committed here. Create it imperatively after generating:
+#
+#   kubectl -n rpe create configmap rpe-jwks \
+#     --from-file=jwks.json=deploy/oauth/public/jwks.json \
+#     --dry-run=client -o yaml | kubectl apply -f -
+#
+# Until that ConfigMap exists the pod sits in ContainerCreating (mount failure) — fail-closed,
+# by convention. Only the PUBLIC JWK Set is mounted; the signing key (deploy/oauth/keys/) never
+# enters the cluster. Mint tokens host-side with deploy/oauth/mint-jwt.sh.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jwks-stub
+  namespace: rpe
+  labels:
+    app: jwks-stub
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jwks-stub
+  template:
+    metadata:
+      labels:
+        app: jwks-stub
+    spec:
+      # arch-audit F-01: automountServiceAccountToken is a zero-tradeoff fix (this pod calls no
+      # Kubernetes API) applied regardless. Full container hardening (non-root uid, readOnlyRootFilesystem)
+      # is deliberately NOT applied here, matching the same exception chaosforge-infra's ECS jwks-stub
+      # documents: stock nginx's master writes /var/run/nginx.pid + /var/cache/nginx and binds :80,
+      # which needs a custom nginx.conf to run non-root — not worth it for a container that holds no
+      # secret, accepts no user input, and serves one world-readable static file. Revisit the moment
+      # it serves anything else.
+      automountServiceAccountToken: false
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: jwks
+              mountPath: /usr/share/nginx/html/.well-known
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /.well-known/jwks.json
+              port: 80
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+      volumes:
+        - name: jwks
+          configMap:
+            name: rpe-jwks
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jwks-stub
+  namespace: rpe
+spec:
+  selector:
+    app: jwks-stub
+  ports:
+    - port: 80
+      targetPort: 80

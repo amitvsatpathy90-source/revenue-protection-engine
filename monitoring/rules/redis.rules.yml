@@ -1,0 +1,43 @@
+# Redis memory watermark rules (ADR-27).
+#
+# Backs rpe_redis_used_memory_bytes / rpe_redis_maxmemory_bytes (RedisMemoryMetrics, detection —
+# the sole Redis owner). Why 80% is the tripwire: under volatile-lru, pressure evicts the TTL'd
+# dedup/vel/geo working set FIRST, so detection quality decays silently (missed velocity/geo
+# alerts look like a quiet day) long before Redis errors. By the time the gate throws OOM write
+# errors and the redis CB opens, the decay is hours old. ADR-27's sliding stats TTL removes the
+# unbounded-growth wedge; this watermark is the operational signal that sizing (96mb lab) needs
+# revisiting or churn is outrunning the TTL.
+#
+# Lab note: synthetic-data thresholds; calibrate to real traffic in prod.
+groups:
+  - name: rpe-redis
+    rules:
+      - alert: RpeRedisMemoryHigh
+        expr: (rpe_redis_used_memory_bytes / rpe_redis_maxmemory_bytes) > 0.8 and rpe_redis_maxmemory_bytes > 0
+        for: 5m
+        labels:
+          severity: warning
+          area: redis
+        annotations:
+          summary: "Redis memory above 80% of maxmemory"
+          description: >-
+            used_memory is {{ $value | humanizePercentage }} of maxmemory. volatile-lru is now (or
+            soon will be) evicting dedup/velocity/geo keys — detection quality is degrading
+            SILENTLY before any error appears. Check stats-key cardinality vs the ADR-27 idle TTL,
+            then resize maxmemory or shorten rpe.detection.stats.ttl-ms.
+
+      # META-ALERT: the INFO poller itself is failing — the memory gauges are frozen at their
+      # last value (0 at boot = false-healthy) and RpeRedisMemoryHigh is blind while this fires.
+      # Threshold: polls run every 30s, so >5 failures in 10m = sustained breakage, not one blip.
+      - alert: RpeRedisInfoPollFailing
+        expr: increase(rpe_redis_info_poll_failures_total[10m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          area: redis
+        annotations:
+          summary: "Redis INFO poll failing — memory watermark is blind"
+          description: >-
+            rpe.redis.*memory gauges have not refreshed for >10m (frozen at their last value;
+            a low reading does NOT mean memory is fine). Fix the poll before trusting
+            RpeRedisMemoryHigh.

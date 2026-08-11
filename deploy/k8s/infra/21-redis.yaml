@@ -1,0 +1,78 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: rpe
+  labels:
+    app: redis
+    app.kubernetes.io/part-of: rpe
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      # Pod-level hardening (arch-audit F-01). uid 999 is redis:7.2.5's real container user
+      # (verified: `docker run --entrypoint sh redis:7.2.5 -c 'grep redis /etc/passwd'` -> 999:999).
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: redis:7.2.5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 128Mi
+          command:
+            - redis-server
+            - --appendonly yes
+            - --appendfsync everysec
+            - --maxmemory 96mb
+            - --maxmemory-policy volatile-lru
+            - --save ""
+          ports:
+            - containerPort: 6379
+          # AOF writes to the image's default working dir (/data) — readOnlyRootFilesystem needs
+          # an explicit writable mount there or the appendonly file can't be created.
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: rpe
+  labels:
+    app: redis
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379

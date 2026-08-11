@@ -1,0 +1,92 @@
+# Post-Flyway column-level grant tightening (ADR-17 §5.3 exact published interface).
+#
+# Apply AFTER Flyway migrations have run in both rpe-detection-service and rpe-alert-service.
+# Flyway creates the tables; this job narrows relay_role's UPDATE to the two columns it
+# legitimately owns (status, attempts) and revokes the broader UPDATE granted by
+# 12-bootstrap-grants.yaml.
+#
+# Run order: 12-bootstrap-grants (cluster init) → service pods start + Flyway runs → this job.
+# In the k8s topology, this job has an initContainer that waits for the outbox and
+# processed_alerts tables to exist before applying the column-level re-grant.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rpe-db-post-flyway-grants
+  namespace: rpe
+  annotations:
+    description: "tighten relay UPDATE to (status,attempts) column-level after Flyway"
+spec:
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      # arch-audit F-01: one-shot Job, calls no Kubernetes API — automount off (zero-tradeoff).
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-tables
+          image: postgres:16.3
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rpe-pg-superuser
+                  key: password
+          command:
+            - /bin/sh
+            - -c
+            - |
+              HOST=rpe-pg-rw.rpe.svc.cluster.local
+              until psql -h "$HOST" -U postgres -d rpe -tAc \
+                "SELECT count(*) FROM information_schema.tables WHERE table_schema IN ('detection','alert') \
+                AND table_name IN ('outbox','processed_alerts')" \
+                | grep -q '^2$'; do
+                echo "waiting for Flyway to create outbox and processed_alerts..."; sleep 5
+              done
+              echo "tables exist"
+      containers:
+        - name: column-grant
+          image: postgres:16.3
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rpe-pg-superuser
+                  key: password
+          command:
+            - psql
+            - -h
+            - rpe-pg-rw.rpe.svc.cluster.local
+            - -U
+            - postgres
+            - -d
+            - rpe
+            - -v
+            - ON_ERROR_STOP=1
+            - -c
+            - |
+              -- Revoke the broad UPDATE granted by default privileges, then re-grant
+              -- the exact column subset relay legitimately needs (ADR-17 §5.3).
+              -- relay_role: SELECT + UPDATE(status,attempts) on outbox ONLY.
+              --   - Cannot INSERT (detection sole writer, ADR-17 §3.4).
+              --   - Cannot DELETE (detection's purge_outbox() owns that).
+              --   - Cannot UPDATE any column other than status or attempts.
+              REVOKE UPDATE ON detection.outbox FROM relay_role;
+              GRANT  SELECT                         ON detection.outbox TO relay_role;
+              GRANT  UPDATE (status, attempts)      ON detection.outbox TO relay_role;
+
+              -- Also restrict the flyway_schema_history table relay might see:
+              -- relay should have no DDL access to detection's migration table.
+              REVOKE ALL ON detection.flyway_schema_history FROM relay_role;
+
+              -- Confirm triage_role SELECT on processed_alerts is in place
+              -- (set via default privileges in job 12 — this is a verification select)
+              DO $$
+              BEGIN
+                IF NOT EXISTS (
+                  SELECT 1 FROM information_schema.role_table_grants
+                  WHERE grantee = 'triage_role' AND table_schema = 'alert'
+                  AND table_name = 'processed_alerts' AND privilege_type = 'SELECT'
+                ) THEN
+                  RAISE EXCEPTION 'triage_role SELECT on processed_alerts is missing';
+                END IF;
+              END $$;

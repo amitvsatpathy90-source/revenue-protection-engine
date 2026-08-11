@@ -1,0 +1,101 @@
+# One-time bootstrap Job: runs as the CNPG superuser to apply DDL that scoped service
+# roles are intentionally NOT privileged to do (schema ownership, search_path,
+# cross-schema USAGE + ALTER DEFAULT PRIVILEGES GRANTs).
+#
+# PostgreSQL ALTER DEFAULT PRIVILEGES limitation:
+#   Column-level UPDATE grants (e.g., UPDATE(status,attempts)) are NOT supported in
+#   ALTER DEFAULT PRIVILEGES — only whole-table operations are supported.
+#   The precise column-restricted grant documented in ADR-17 §5.3 requires the table
+#   to already exist, so it is applied by the post-Flyway job (13-post-flyway-grants.yaml).
+#   This job establishes the broader defaults; the post-Flyway job tightens them to the
+#   exact column-level boundary documented in the ADR.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rpe-db-bootstrap
+  namespace: rpe
+  annotations:
+    description: "schema ownership, search_path, cross-schema default privileges"
+spec:
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      # arch-audit F-01: one-shot Job, calls no Kubernetes API — automount off is the zero-tradeoff
+      # control. Full non-root/readOnly hardening skipped deliberately (the psql client writes its
+      # own scratch; short-lived Job), same reasoning as the jwks-stub exception.
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-roles
+          image: postgres:16.3
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rpe-pg-superuser
+                  key: password
+          command:
+            - /bin/sh
+            - -c
+            - |
+              HOST=rpe-pg-rw.rpe.svc.cluster.local
+              until psql -h "$HOST" -U postgres -d rpe -tAc \
+                "SELECT count(*) FROM pg_roles WHERE rolname IN \
+                ('detection_role','relay_role','alert_role','triage_role')" \
+                | grep -q '^4$'; do
+                echo "waiting for all 4 managed roles..."; sleep 3
+              done
+              echo "all roles present"
+      containers:
+        - name: grant-ddl
+          image: postgres:16.3
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rpe-pg-superuser
+                  key: password
+          command:
+            - psql
+            - -h
+            - rpe-pg-rw.rpe.svc.cluster.local
+            - -U
+            - postgres
+            - -d
+            - rpe
+            - -v
+            - ON_ERROR_STOP=1
+            - -c
+            - |
+              -- 1. Schema ownership → each role can CREATE TABLE in its own schema
+              ALTER SCHEMA detection OWNER TO detection_role;
+              ALTER SCHEMA alert     OWNER TO alert_role;
+              ALTER SCHEMA triage    OWNER TO triage_role;
+
+              -- 2. CONNECT on the shared database
+              GRANT CONNECT ON DATABASE rpe
+                TO detection_role, relay_role, alert_role, triage_role;
+
+              -- 3. USAGE on schemas each cross-service reader needs
+              GRANT USAGE ON SCHEMA detection TO relay_role;
+              GRANT USAGE ON SCHEMA alert     TO triage_role;
+
+              -- 4. Per-role default search_path (keeps service SQL unqualified)
+              ALTER ROLE detection_role SET search_path = detection;
+              ALTER ROLE relay_role     SET search_path = detection;
+              ALTER ROLE alert_role     SET search_path = alert;
+              ALTER ROLE triage_role    SET search_path = triage, alert;
+
+              -- 5. Cross-schema default privileges (ADR-17 §5.3 — broad defaults here;
+              -- column-level UPDATE restriction tightened in 13-post-flyway-grants.yaml
+              -- once the outbox table exists)
+              ALTER DEFAULT PRIVILEGES FOR ROLE detection_role IN SCHEMA detection
+                GRANT SELECT, UPDATE ON TABLES TO relay_role;
+              ALTER DEFAULT PRIVILEGES FOR ROLE detection_role IN SCHEMA detection
+                GRANT USAGE, SELECT ON SEQUENCES TO relay_role;
+
+              ALTER DEFAULT PRIVILEGES FOR ROLE alert_role IN SCHEMA alert
+                GRANT SELECT ON TABLES TO triage_role;
+
+              -- 6. Harden: revoke public schema blanket access
+              REVOKE ALL ON SCHEMA public FROM PUBLIC;
