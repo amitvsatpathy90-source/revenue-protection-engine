@@ -333,3 +333,4 @@ missed detections; stats accuracy preserved.
 
 We use Architectural Decision Records (ADRs) to track key technical and design decisions.
 For the complete, single-source-of-truth list, see the [ADR Index](docs/adrs/README.md).
+# CI bootstrap check
