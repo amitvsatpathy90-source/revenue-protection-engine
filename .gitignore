@@ -83,6 +83,3 @@ redis-data/
 redpanda-data/
 grafana-data/
 prometheus-data/
-
-# Wildcard pattern to catch private env files in any subfolder/nested services
-*.private.env.json
