@@ -1,6 +1,6 @@
-# RPE Actuator Endpoints — Complete Testing & Authorization Guide
+# RPE Actuator Endpoints — Testing & Authorization Guide
 
-All four RPE services protect the actuator surface (metrics, health, env) with OAuth2 Resource Server validation. This guide covers everything: setup, bearer token generation, testing with Postman/IntelliJ, and troubleshooting.
+All four RPE services protect the actuator surface (metrics, health, env) with OAuth2 Resource Server validation. This guide covers everything: setup, bearer token generation, testing with Postman, and troubleshooting.
 
 ---
 
@@ -21,7 +21,7 @@ curl -H "Authorization: Bearer $TOKEN" \
   http://localhost:8080/actuator/prometheus | head -5
 ```
 
-**Done.** Token is valid for 30 days. Copy it to Postman or IntelliJ below.
+**Done.** Token is valid for 30 days. Copy it into Postman below.
 
 ---
 
@@ -34,7 +34,7 @@ curl -H "Authorization: Bearer $TOKEN" \
    - [Step 1: Generate OAuth Keys](#step-1-generate-oauth-key-material)
    - [Step 2: Mint a Token](#step-2-mint-a-test-token)
    - [Step 3: Configure Postman](#step-3-set-token-in-postman)
-   - [Step 4: Verify Token Works](#step-5-verify-token-works)
+   - [Step 4: Verify Token Works](#step-4-verify-token-works)
 5. [Testing Endpoints](#testing-endpoints)
    - [Startup Checklist](#startup-checklist)
 6. [Token Management](#token-management)
@@ -50,9 +50,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 | File | Purpose |
 |------|---------|
-| `rpe-actuator.http` | Runnable REST Client requests for supported IDEs (IntelliJ, VS Code) |
-| `rpe-actuator.postman_collection.json` | Postman collection for import (same endpoints) |
-| `README.md` | This file — everything you need |
+| `rpe-actuator.json` | Postman collection for import (all 4 services' actuator endpoints) |
 
 ---
 
@@ -63,9 +61,9 @@ Four independently deployable services, each with an OAuth2-protected actuator s
 | Service | Port | Startup Command |
 |---|---|---|
 | **detection** | 8080 | `mvn -f rpe-detection-service/pom.xml spring-boot:run -Dspring-boot.run.profiles=dev` |
-| **relay** | 8081 | `mvn -f rpe-relay-service/pom.xml spring-boot:run` |
-| **alert** | 8082 | `mvn -f rpe-alert-service/pom.xml spring-boot:run` |
-| **triage** | 8083 | `mvn -f rpe-triage-agent/pom.xml spring-boot:run` |
+| **relay** | 8082 | `mvn -f rpe-relay-service/pom.xml spring-boot:run` |
+| **alert** | 8083 | `mvn -f rpe-alert-service/pom.xml spring-boot:run` |
+| **triage** | 8081 | `mvn -f rpe-triage-agent/pom.xml spring-boot:run` |
 
 ---
 
@@ -89,6 +87,8 @@ GET /actuator/health       # → component health detail (requires token)
 GET /actuator/info         # → build/app info (requires token)
 GET /actuator/prometheus   # → Prometheus metrics (requires token)
 ```
+
+> **Note:** the Postman collection only exercises `health`/`info`/`prometheus` for **detection**; relay, alert, and triage requests cover `/actuator/health` only. Add `/info` and `/prometheus` requests for those three if you need full parity.
 
 **Missing or invalid token** → `401 Unauthorized`
 
@@ -165,7 +165,7 @@ You should see:
 #### Option A: Collection Variable (Recommended)
 
 1. **Open the collection** in Postman:
-   - File → Import → Select `http/rpe-actuator.postman_collection.json`
+   - File → Import → Select `postman/rpe-actuator.json`
    - Or drag-and-drop into Postman
 
 2. **Locate collection variables**:
@@ -193,14 +193,6 @@ You should see:
 
 3. **Activate**:
    - Top-right dropdown → Select `RPE Local`
-
-### Option C: Compatible IDEs (`.http` file)
-
-For IDEs supporting `.http` files (IntelliJ IDEA, VS Code with REST Client extension, etc.):
-
-1. Open `http/rpe-actuator.http`.
-2. Ensure `RPE_SCRAPE_JWT` is populated.
-3. Click the run icon next to any request in the file.
 
 ---
 
@@ -259,17 +251,17 @@ Before running endpoints, start everything in order:
      -Dspring-boot.run.jvmArguments="-XX:+AllowRedefinitionToAddDeleteMethods -Djdk.tracePinnedThreads=full"
    ```
 
-3. **Relay service** (new terminal):
+3. **Relay service** (new terminal, port 8082):
    ```bash
    env $(grep -v '^#' .env | xargs) mvn -f rpe-relay-service/pom.xml spring-boot:run
    ```
 
-4. **Alert service** (new terminal):
+4. **Alert service** (new terminal, port 8083):
    ```bash
    env $(grep -v '^#' .env | xargs) mvn -f rpe-alert-service/pom.xml spring-boot:run
    ```
 
-5. **Triage service** (new terminal, optional):
+5. **Triage service** (new terminal, port 8081, optional):
    ```bash
    env $(grep -v '^#' .env | xargs) mvn -f rpe-triage-agent/pom.xml spring-boot:run
    ```
@@ -283,7 +275,6 @@ Before running endpoints, start everything in order:
 
 7. **Test endpoints**:
    - **Postman**: Import collection, set variable, send requests
-   - **IntelliJ**: Open `.http` file, set `@bearerToken`, run requests
    - **cURL**: Use sample commands above
 
 ---
@@ -301,9 +292,7 @@ Before running endpoints, start everything in order:
 TOKEN=$(bash deploy/oauth/mint-jwt.sh --ttl 2592000)
 echo "$TOKEN"
 
-# Update your test tool:
-#   Postman → collection variable RPE_SCRAPE_JWT
-#   IntelliJ → @bearerToken in .http file or .env
+# Update Postman collection variable RPE_SCRAPE_JWT with the new value
 ```
 
 ---
@@ -363,11 +352,10 @@ bash deploy/oauth/mint-jwt.sh --help
 | `401` + "Invalid audience" | Audience mismatch | Check `.env` `RPE_OAUTH_AUDIENCE` matches "rpe-actuator" (mint-jwt.sh default) |
 | `401` + "Invalid issuer" | Issuer mismatch | Check `.env` `RPE_OAUTH_ISSUER` matches "http://rpe-jwks-stub" (mint-jwt.sh default) |
 | `401` + "Invalid signature" | JWKS endpoint unreachable or keys don't match | Ensure `docker compose up -d` has `jwks-stub` running; regenerate keys with `generate-jwks.sh` |
-| `Connection refused` on port 808X | Service not running | Start service: `mvn -f <svc>/pom.xml spring-boot:run` |
+| `Connection refused` on relay/alert/triage | Wrong port assumed | relay=8082, alert=8083, triage=8081 — **not** sequential from detection's 8080 |
 | `502 Bad Gateway` | Service crashed or slow startup | Check service logs; restart if needed |
 | `503 Service Unavailable` | Health check reports degraded state | Use `GET /actuator/health` (with token) to see which components are down |
 | Postman variable `{{RPE_SCRAPE_JWT}}` empty | Variable not saved | Click "Save" after pasting token; restart Postman if needed |
-| IntelliJ shows `{{RPE_SCRAPE_JWT}}` as literal | Variable not resolved | Ensure `.env` file exists and is loaded; or replace literal in `.http` file |
 
 ---
 
@@ -378,4 +366,4 @@ bash deploy/oauth/mint-jwt.sh --help
 - **Composable**: Services can scale horizontally; actuator surface stays the same
 - **OAuth2 Resource Server**: All actuator endpoints (except public probes) validate signature + issuer + audience + scope
 - **Token reuse**: Once minted, a token is valid for its TTL duration (30 days recommended); no need to regenerate on each request
-
+- **Non-sequential ports**: relay/alert/triage ports are not detection+1/+2/+3 — see Service Topology table, not intuition
