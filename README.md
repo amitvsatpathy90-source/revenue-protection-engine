@@ -1,4 +1,4 @@
-# revenue-protection-engine (RPE)
+# Revenue Protection Engine (RPE)
 
 Synthetic payment-event stream → rule-based anomaly detection → Kafka alerts, with observability.
 
