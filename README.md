@@ -138,24 +138,32 @@ Canonical container topology: `docker compose --env-file .env -f deploy/docker-c
 #    GRAFANA_PASSWORD are unset (security rule: secrets via environment only).
 cp .env.example .env
 
-# 2. Export .env into the current shell ONCE
+# 2. Generate RSA keypairs and static JWKS for local Actuator auth (ADR-19)
+bash deploy/oauth/generate-jwks.sh
+
+# 3. Mint a 30-day bearer token for Prometheus metrics scraping and update .env
+TOKEN=$(bash deploy/oauth/mint-jwt.sh --ttl 2592000)
+sed -i '' "s/^RPE_PROM_SCRAPE_TOKEN=.*/RPE_PROM_SCRAPE_TOKEN=$TOKEN/" .env
+
+# 4. Export .env into the current shell ONCE
 export $(grep -v '^#' .env | xargs)
 
-# 3a. All-in-one DEV convenience (infra + detection-on-host via mvn + triage profile):
+# 5a. All-in-one DEV convenience (infra + detection-on-host via mvn + triage profile):
 docker compose up -d
 
-# 3b. CANONICAL four-service topology (ADR-17 Stage 5 — all services as containers):
+# 5b. CANONICAL four-service topology (ADR-17 Stage 5 — all services as containers):
 docker compose -f deploy/docker-compose.services.yml up -d
 
-# 4. Run services individually. Each service is its own module (ADR-17); the
+# 6. Run services individually. Each service is its own module (ADR-17); the
 #    repo root has no pom, so target a service pom with -f. Spring does not
 #    read .env natively — this relies on the export from step 2 above.
+#    This comes after step 5a above.
 mvn -f rpe-detection-service/pom.xml spring-boot:run   # port 8080
 mvn -f rpe-relay-service/pom.xml spring-boot:run        # port 8082
 mvn -f rpe-alert-service/pom.xml spring-boot:run        # port 8083
 mvn -f rpe-triage-agent/pom.xml spring-boot:run         # port 8081
 
-# 5. (dev mode — BlockHound + VT pinning trace, detection service)
+# 7. (dev mode — BlockHound + VT pinning trace, detection service)
 mvn -f rpe-detection-service/pom.xml spring-boot:run \
   -Dspring-boot.run.profiles=dev \
   -Dspring-boot.run.arguments="--rpe.dev.blockhound.enabled=true --rpe.dev.reactor-debug-agent=true" \
