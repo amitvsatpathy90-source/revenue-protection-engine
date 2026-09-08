@@ -1,12 +1,12 @@
 # Multi-stage: self-contained build, pinned bases (no :latest — infra rule)
-FROM maven:3.9.9-eclipse-temurin-21 AS build
+FROM maven:3.9.15-eclipse-temurin-26 AS build
 WORKDIR /build
 COPY pom.xml .
 RUN mvn -q -B dependency:go-offline
 COPY src ./src
 RUN mvn -q -B package -DskipTests
 
-FROM eclipse-temurin:21.0.7_6-jre
+FROM eclipse-temurin:24.0.2_12-jre
 WORKDIR /app
 COPY --from=build /build/target/rpe-relay-service-*.jar app.jar
 # Non-root by default (defense in depth): the pod securityContext already sets runAsUser:1000 +
