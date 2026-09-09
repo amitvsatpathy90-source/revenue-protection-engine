@@ -1,6 +1,6 @@
 # ADR-14: Lua Gate Returns Raw State; Java Detectors Apply Thresholds
 
-**Status:** ACCEPTED | **Decided:** 2026-06-09 | **Owner:** amit | **Reversal cost:** LOW
+**Status:** ACCEPTED (amended 2026-06-11) | **Decided:** 2026-06-09 | **Owner:** amit | **Reversal cost:** LOW
 
 ---
 
