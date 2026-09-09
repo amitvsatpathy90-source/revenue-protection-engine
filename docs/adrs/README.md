@@ -43,6 +43,6 @@ the changelog at the bottom for why.
 
 | Date | Change |
 |---|---|
-| 2026-09-03 | Updated `File` column entries across the index from static file names to explicit Markdown links (`[ADR-XX.md](ADR-XX.md)`) for GitHub views. |
 | 2026-07-15 | Created as the single source of truth for the ADR index — previously duplicated verbatim in both `README.md` and `Architecture Spec`, which drifted (`README.md` was missing `ADR-27` until caught during a coverage audit the same day). `Architecture Spec` was ruled out as the canonical location despite being the more natural "AI context" home: it's gitignored in this repo (private, never published — see `.gitignore`), so a link from the public `README.md` into it would 404 for anyone actually viewing the repo on GitHub. Both `README.md` and `Architecture Spec` now link here instead of embedding the table. |
+| 2026-09-03 | Updated `File` column entries across the index from static file names to explicit Markdown links (`[ADR-XX.md](ADR-XX.md)`) for GitHub views. |
 | 2026-09-05 | Added `ADR-30` (RAG-Augmented Triage: pgvector, OpenAI Embeddings, Independent R4j Boundary) to the index. |
