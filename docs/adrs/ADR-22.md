@@ -1,5 +1,3 @@
-<!-- edit-log (newest first): v1.0 | 2026-06-29 | Initial. ACCEPTED. -->
-
 ---
 asset_id: adr-22-graceful-shutdown
 asset_path: docs/adrs/ADR-22.md
@@ -158,3 +156,9 @@ stay. No data-format or topic/contract change, so no cross-service coordination 
 - `AbstractMessageListenerContainer.DEFAULT_PHASE = 2147483547` (spring-kafka 4.1.0) — the anchor constant
 - Spring Boot `server.shutdown: graceful` + `spring.lifecycle.timeout-per-shutdown-phase`
 - ADR-02 (CB buffer), ADR-09 (rebalance drain), ADR-12 (outbox loss window), ADR-13 (replay safety)
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-06-29 | @amit | Initial — ACCEPTED. Establishes coordinated graceful shutdown via `SmartLifecycle` phase ordering, bounded per-service drains, readiness-flip, and Kubernetes termination alignment. |

@@ -39,3 +39,10 @@ The blocking submit is the back-pressure mechanism: when a lane queue fills, the
 ## Amendment (2026-07-06)
 
 `CallerRunsPolicy` → `BoundedBlockingSubmitPolicy` (`LaneExecutorService`). The original decision documented the poll-stall as the backpressure feature but missed that inline execution runs concurrently with the lane worker, violating the "per-account single-threaded lane" invariant that geo read-before-write correctness depends on (EADIE audit, deferred P2). The replacement parks the submitter on the queue (bounded 500ms interruptible slices, retried until capacity/shutdown/interrupt), keeping the identical backpressure signature. Depends on `asyncAcks=true` (KafkaConfig) for the shutdown-mid-park redelivery guarantee.
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-05-20 | @amit | Initial — ACCEPTED. Bounds per-account lane queues and lane-map memory with Caffeine and backpressure to prevent heap exhaustion while preserving single-writer and offset-ordering invariants. |
+| 1.1.0 | 2026-07-06 | @amit | Amendment — ACCEPTED. Replaces `CallerRunsPolicy` with bounded blocking submission to prevent concurrent lane execution and preserve per-account ordering under queue saturation. |

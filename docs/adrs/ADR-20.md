@@ -1,5 +1,3 @@
-<!-- edit-log (newest first): v1.0 | 2026-06-28 | Initial. ACCEPTED. -->
-
 ---
 asset_id: adr-20-kafka-transport-auth-and-acls
 asset_path: docs/adrs/ADR-20.md
@@ -135,3 +133,9 @@ No data migration; topics and offsets are unaffected.
 - ADR-06 — relay `transactional.id` prefix from `RELAY_INSTANCE_ID`
 - `ADR-20.md` — enforcement detail
 - `deploy/kafka/provision-acls.sh` — the idempotent provisioning script
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-06-28 | @amit | Initial — ACCEPTED. Establishes Kafka transport auth via SASL_SSL/SCRAM-SHA-512 and enforces broker-side least-privilege ACLs per service principal. |

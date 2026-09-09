@@ -28,3 +28,9 @@ Kafka rebalances revoke partition ownership. In-flight lane tasks for revoked pa
 ## Failure Modes
 
 - **Drain exceeds 5s (Redis slow):** Timeout triggers; brief dual-processing begins. Detection: duplicate dedup key hits (Redis `SET NX` returns 0) — observable via `rpe.dedup.blocked` counter. Correctness unaffected.
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-05-20 | @amit | Initial — ACCEPTED. Drains only lanes associated with revoked Kafka partitions, bounded to 5s, while deterministic `alert_id` and deduplication preserve correctness during rebalance overlap. |

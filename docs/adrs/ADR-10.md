@@ -27,3 +27,9 @@
 ## Failure Modes
 
 - **Redis hits `maxmemory`:** `volatile-lru` begins evicting TTL-bearing keys. Detection: `rpe.dedup.blocked` drops (dedup key evicted = replay slips through). Mitigation: increase `maxmemory` or reduce account population.
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-05-20 | @amit | Initial — ACCEPTED. Configures Redis with `volatile-lru` to protect non-expiring Welford statistics from eviction while allowing TTL-based dedup, velocity, and geo state to be evicted under memory pressure. |

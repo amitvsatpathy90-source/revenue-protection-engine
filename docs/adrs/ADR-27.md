@@ -1,5 +1,3 @@
-<!-- edit-log (newest first): v1.0 | 2026-07-12 | Initial. ACCEPTED — implemented with the arch-audit Bundle 2 change (gate.lua PEXPIRE + RedisMemoryMetrics + redis.rules.yml). -->
-
 ---
 asset_id: adr-27-stats-key-lifecycle
 asset_path: docs/adrs/ADR-27.md
@@ -128,3 +126,9 @@ silent revert fails the build.
 - Redis key-eviction reference (redis.io): "The `volatile-xxx` policies behave like `noeviction`
   if no keys have an associated expiration."
 - 2026-07-12 arch-audit finding R5 (Bundle 2); ADR-10 (superseded sub-decision).
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-07-12 | @amit | Initial — ACCEPTED. Adds a sliding idle TTL to `stats:{account}` Welford baselines in `gate.lua` and introduces Redis memory watermark gauges and Prometheus alerts. |

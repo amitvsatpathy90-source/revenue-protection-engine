@@ -34,6 +34,7 @@ Outbox inserts need to be fast (~3× faster than synchronous WAL flush). Two can
 
 ## Changelog
 
-| Date | Change |
-|---|---|
-| 2026-07-15 | Coverage-audit correction: the arch-audit HIGH-1 RESOLVED note's "residual exposure is stage (3) only" claim was wrong — the durable-enqueue fix only closes stage (1); stage (2) (≤50ms batch-flush timer) was never eliminated and remains open alongside stage (3) (200ms WAL). Corrected to match Architecture Spec's already-accurate restatement, which had silently diverged from this ADR's own text. |
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-05-20 | @amit | Initial — ACCEPTED. Uses `synchronous_commit=off` instead of `UNLOGGED` for outbox transactions, retaining WAL and replication while accepting a bounded durability window. |
+| 1.1.0 | 2026-07-15 | @amit | Coverage-audit correction — durable enqueue now precedes Kafka acknowledgment, eliminating Stage 1 (async enqueue gap); Stage 2 (≤50ms batch flush) and Stage 3 (≤200ms WAL durability) remain the documented crash-loss window. Corrected to match the Architecture Spec's already-accurate restatement after the ADR had silently diverged. |

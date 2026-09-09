@@ -1,5 +1,3 @@
-<!-- edit-log (newest first): v1.0 | 2026-07-15 | Initial. ACCEPTED — backfill of an already-implemented 2026-07-12 arch-audit finding (R4), documenting the invariant ProcessedAlertsPurge.java has enforced since that date. -->
-
 ---
 asset_id: adr-28-dedup-guard-horizon
 asset_path: docs/adrs/ADR-28.md
@@ -114,4 +112,4 @@ latency margin without re-verifying the inequality this ADR states.
 
 | Date | Version | Author | Change |
 |---|---|---|---|
-| 2026-07-15 | 1.0.0 | amit | Initial — ACCEPTED. Backfills the 2026-07-12 arch-audit R4 finding; documents the purge-horizon-must-exceed-redelivery-window invariant `ProcessedAlertsPurge.java` has enforced since that date. |
+| 2026-07-15 | 1.0.0 | amit | Initial — ACCEPTED. Backfills the 2026-07-12 arch-audit R4 finding, formalizing the 30-day purge horizon for `processed_alerts` to strictly outlive all redelivery, DLT re-drive, and topic retention windows. |

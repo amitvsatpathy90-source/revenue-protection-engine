@@ -1,5 +1,3 @@
-<!-- edit-log (newest first): v1.0 | 2026-07-06 | Initial. ACCEPTED. -->
-
 ---
 asset_id: adr-26-detection-ack-cb-redrive-correctness
 asset_path: docs/adrs/ADR-26.md
@@ -221,3 +219,9 @@ Immutable Constraints in review.
 - ADR-02 (CB fallback), ADR-07 (lane executor), ADR-12 (async-enqueue window), ADR-13 (UUIDv5
   `alert_id`), ADR-14 (gate dedup-last), ADR-18/ADR-23 (DLT ownership + re-drive), ADR-22 (shutdown
   drain safety-net)
+  
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-07-06 | @amit | Initial — ACCEPTED. Enforces asyncAcks deferred commits, enables auto OPEN-to-HALF_OPEN Redis CB transition, and introduces outcome-aware DLT headers with deterministic UUIDv5 alert reconstruction. |

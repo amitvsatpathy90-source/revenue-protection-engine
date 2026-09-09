@@ -1,5 +1,3 @@
-<!-- edit-log (newest first): v1.1 | 2026-07-02 | R2 resolved — bucket clock moved from caller System.currentTimeMillis() to server-authoritative redis.call('TIME'); removes inter-replica skew from the shared bucket (arch audit). | v1.0 | 2026-06-29 | Initial. ACCEPTED. -->
-
 ---
 asset_id: adr-24-distributed-rate-limiting
 asset_path: docs/adrs/ADR-24.md
@@ -170,3 +168,10 @@ fallback). No data-format, schema, or topic change; the `ratelimit:` keys expire
 - `DistributedRateLimiterIntegrationTest` — the global-cap proof (two instances, one bucket)
 - ADR-03 (per-instance limiter this supersedes the upgrade-path line of), ADR-10 (eviction),
   ADR-14 (gate contract), ADR-15 (triage LLM limiter asymmetry)
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.1.0 | 2026-07-02 | @amit | R2 resolved — bucket clock moved from caller `System.currentTimeMillis()` to server-authoritative `redis.call('TIME')`; removes inter-replica skew from the shared bucket (arch audit). |
+| 1.0.0 | 2026-06-29 | @amit | Initial — ACCEPTED. Establishes a global atomic Lua token bucket in Redis with circuit-breaker fallback to local Guava limiters on outage. |

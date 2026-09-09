@@ -29,3 +29,9 @@ HTTP surface: WebFlux (Netty). Processing pipeline: MVC with virtual threads. Re
 
 - **Missing `publishOn`:** Result handler executes on Lettuce I/O thread; any downstream blocking call silently deadlocks the I/O thread under load. Detection: `lettuce.pool.pending` sustained > 0; latency spike on `rpe.detection.timer`.
 - **Blocking JDBC on VT scheduler:** PgJDBC `synchronized` pins carrier threads; VT concurrency degrades silently. Detection: `-Djdk.tracePinnedThreads=full` in dev; JFR `jdk.VirtualThreadPinned` in production.
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-05-20 | @amit | Initial — ACCEPTED. Establishes the dual-runtime architecture separating WebFlux (HTTP) and virtual-thread MVC (pipeline) with reactive Lettuce for Redis. |

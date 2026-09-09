@@ -43,3 +43,10 @@ The stored/returned `count` stays the true uncapped value (the `>= 30` gate read
 **Rejected alternative — cap the stored `count` too:** would break the `>= 30` insufficient-history gate (ADR-14 / lua-gate.md), which reads the true post-update count. The cap is an arithmetic-window control, not a count control.
 
 **Pinned by:** `ZScoreDetectorTest.pastTheSampleCapStddevNormalisesByTheCapNotTheTrueCount` (the Java divisor) and `RedisStatsLifecycleIntegrationTest.welfordM2StopsAccumulatingPastTheSampleCap` (the Lua decay, against real Redis with a small cap). Both were negative-tested: each fails on the pre-amendment code and passes on the amended code.
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-05-20 | @amit | Initial — ACCEPTED. Caps Welford arithmetic at 10,000 effective samples to bound `M2` growth and preserve z-score numerical accuracy for high-frequency accounts. |
+| 1.1.0 | 2026-07-16 | @amit | Amendment — ACCEPTED. Applies the 10,000-sample cap consistently to both `M2` decay and z-score standard-deviation normalization to prevent silent missed anomalies from inflated variance. |

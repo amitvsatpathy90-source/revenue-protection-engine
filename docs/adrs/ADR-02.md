@@ -40,3 +40,9 @@ BUFFERING → [CB half-open]  → DRAINING → NORMAL
 
 - **Buffer undersized:** Heap exhaustion before pause triggers. Detection: `rpe.consumer.lag` rising + JVM heap metrics. Mitigation: increase `rpe.resilience.redis.buffer-size`.
 - **CB never closes:** Consumer stays paused indefinitely. Detection: `rpe.consumer.lag` alert after SLO threshold. Mitigation: human ops intervention; Redis restart.
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-05-20 | @amit | Initial — ACCEPTED. Establishes the C+D hybrid circuit-breaker fallback using memory buffering and consumer pausing, rejecting DLT routing for transient Redis failures. |

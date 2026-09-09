@@ -7,8 +7,6 @@ adr_supersedes: null
 adr_superseded_by: null
 ---
 
-<!-- edit-log (newest first): v1.0 | 2026-06-17 | Initial — ACCEPTED. Decomposes the modular monolith into four independently deployable services along correctness-safe seams. Ratifies ADR-17.md. -->
-
 # ADR-17 — Decompose RPE into independently deployable services along correctness-safe seams
 
 ## Status

@@ -30,3 +30,9 @@ Three distinct problems: (1) partition saturation from high-frequency accounts, 
 
 - **Redis classification SET unavailable:** Caffeine cache serves stale classification for 60s; after TTL, falls back to non-elevated limits. Logged at WARN. No silent misclassification.
 - **Composite key deployment without geo-exempt flag:** Geo rule fires incorrectly on split-account events. Detection: unexpected geo alert rate spike for that account. Mitigation: add account to `rpe:config:geo_exempt_accounts`.
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-05-20 | @amit | Initial — ACCEPTED. Introduces explicit Redis-backed account classification and geo-exempt opt-in to enable dynamic elevated-limit configuration without redeploys and prevent silent geo-rule bypasses. |

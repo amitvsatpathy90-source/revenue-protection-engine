@@ -1,5 +1,3 @@
-<!-- edit-log (newest first): v1.0 | 2026-06-30 | Initial. ACCEPTED. -->
-
 ---
 asset_id: adr-25-distributed-tracing
 asset_path: docs/adrs/ADR-25.md
@@ -161,3 +159,9 @@ outbox seam stays broken). No topic, payload, or alert-contract change.
   `docs/adrs/superseded/52-instrumentation.yaml` (superseded CR — relocated out of the live manifest tree; it injected nothing once the annotations were removed)
 - ADR-17 §7 (Stage 6 observability stack), ADR-11 (outbox contract, additive evolution), ADR-13
   (deterministic `alert_id`), ADR-15 (triage LLM), ADR-19 (Actuator-only HTTP surface)
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-06-30 | @amit | Initial — ACCEPTED. Replaces agent-only tracing with app-level Micrometer Observation, stitching W3C trace context across the transactional outbox via additive schema columns. |
