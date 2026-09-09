@@ -1,5 +1,3 @@
-<!-- edit-log (newest first): v1.0 | 2026-06-17 | Initial. ACCEPTED. -->
-
 ---
 asset_id: adr-18-payment-alerts-dlt-per-consumer-group
 asset_path: docs/adrs/ADR-18.md
@@ -129,3 +127,9 @@ public DeadLetterPublishingRecoverer triageAlertsDltRecoverer(KafkaTemplate<?, ?
 - ADR-15 — triage agent design; R4j full stack on LLM boundary
 - ADR-10 — no auto-replay from DLT
 - Spring Kafka `DeadLetterPublishingRecoverer` — destination resolver API
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-06-17 | @amit | Initial — ACCEPTED. Enforces single-writer principle (`ADR-17`) by isolating `payment.alerts` DLT topics per consumer group (`rpe-alert-service` vs. `rpe-triage-agent`). |

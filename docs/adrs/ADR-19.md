@@ -1,5 +1,3 @@
-<!-- edit-log (newest first): v1.0 | 2026-06-28 | Initial. ACCEPTED. -->
-
 ---
 asset_id: adr-19-zero-trust-actuator-boundary
 asset_path: docs/adrs/ADR-19.md
@@ -153,3 +151,9 @@ requires that **reachability ≠ authorization** even for an internal Prometheus
 - `ADR-19.md` — enforcement detail
 - `security.md` — PII/actuator-exposure rules (now asserted *and* authenticated)
 - Spring Security 7.0 reactive/servlet resource-server DSL; Nimbus JWKS decoder
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-06-28 | @amit | Initial — ACCEPTED. Establishes zero-trust Actuator security via OAuth2 Resource Server (JWT), enforcing fail-closed boot, audience validation, and scope-restricted Prometheus scrapes. |

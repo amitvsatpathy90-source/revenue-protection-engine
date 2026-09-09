@@ -1,5 +1,3 @@
-<!-- edit-log (newest first): v1.1 | 2026-07-04 | Doc-drift audit correction — status PROPOSED → ACCEPTED. The module was fully implemented, is cited as settled/binding by ADR-17/18/23/24 and every rules file, and passes 31/31 tests; the status field was simply never flipped after implementation landed. Also dropped the dangling "arch-decisions-log.md §2.1" cross-reference — that file does not exist anywhere in this repo. | v1.0 | 2026-06-12 | Initial — status PROPOSED. RPE service-scoped series (not workspace ADR-NNNN). -->
-
 # ADR-15 — AI Triage Agent: Spring AI, advisory-only, downstream of `payment.alerts`
 
 - **Status:** ACCEPTED

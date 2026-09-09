@@ -49,7 +49,7 @@ Lua gate returns a raw state array: `[dedupResult, velocityPriorCount, welfordCo
 
 ## Changelog
 
-| Date | Change |
-|---|---|
-| 2026-06-09 | Initial — Lua-returns-raw-state model accepted; `GeoSnapshot` replaces flat geo fields |
-| 2026-06-11 | Mapper single-construction-site invariant and `GeoSnapshot` constructor guard ordering documented; exception message PII rule added; double-emit and silent-coercion failure modes added |
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-06-09 | @amit | Initial — ACCEPTED. Lua-returns-raw-state model accepted; `GeoSnapshot` replaces flat geo fields. |
+| 1.1.0 | 2026-06-11 | @amit | Amendment — ACCEPTED. Mapper single-construction-site invariant and `GeoSnapshot` constructor guard ordering documented; exception message PII rule added; double-emit and silent-coercion failure modes added. |

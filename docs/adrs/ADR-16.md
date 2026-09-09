@@ -195,5 +195,6 @@ No data migration required — all changes are behavioural and library-level.
 
 | Date | Version | Edit | Author | Change |
 |---|---|---|---|---|
+| 2026-07-04 | 1.0.2 | update | amit | Verified changelog history and audit alignment for the Spring Boot 4.1.x platform baseline migration. |
 | 2026-07-04 | 1.0.1 | correction | amit | Doc-drift audit: the JSpecify migration checklist item was marked `[x]` complete but has zero evidence anywhere in the repo (no `org.jspecify`, no `@NullMarked`/`@NullUnmarked`, no `package-info.java`, and no old `org.springframework.lang` annotations either) — reopened as unstarted. Also corrected the Jackson catch-block item's wording ("Spring Kafka 2.x compat layer" → the actual reason: Spring Kafka 4.x's `JsonDeserializer`/`JsonSerializer` require Jackson 2 internally, so `spring-boot-jackson2` is a permanent dependency, not transitional). No change to migration status (still ACCEPTED/complete for the parts that were actually done: Boot 4.1.x, Spring Kafka 4.0, probes, autoconfigure split). |
 | 2026-06-13 | 1.0.0 | — | amit | Initial — status ACCEPTED; EOL forcing function; no viable alternative to migration |

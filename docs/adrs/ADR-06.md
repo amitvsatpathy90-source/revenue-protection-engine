@@ -26,3 +26,9 @@ Kafka transactional producers require a stable, unique `transactional.id` per pr
 ## Failure Modes
 
 - **Two instances share `RELAY_INSTANCE_ID`:** `ProducerFencedException` loop; relay stalls. Detection: `ProducerFencedException` in logs; `rpe.outbox.pending.age_seconds` rising. Mitigation: fix env config; restart affected instance.
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-05-20 | @amit | Initial — ACCEPTED. Injects a stable, environment-derived Kafka `transactional.id` per relay instance to prevent `ProducerFencedException` and preserve transactional producer identity across restarts. |

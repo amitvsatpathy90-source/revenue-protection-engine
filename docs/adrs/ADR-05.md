@@ -32,3 +32,9 @@ The relay needs a low-latency wake-up on outbox insert. Fixed 200ms polling gene
 
 - **LISTEN connection drops:** Reconnect loop retries every 5s. During reconnect window, adaptive polling fires every 5s (fallback). No relay stall — `semaphore.release()` in `catch` block.
 - **Trigger not firing (DDL corrupted):** `lastNotificationAt` goes stale. Detection: `rpe.relay.listener.healthy` gauge drops + `rpe.outbox.pending.age_seconds` rises. Mitigation: re-apply V4 migration.
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-05-20 | @amit | Initial — ACCEPTED. Introduces LISTEN/NOTIFY with adaptive polling fallback through a RelayTrigger abstraction to provide low-latency relay wake-up while preserving correctness independent of notification delivery. |

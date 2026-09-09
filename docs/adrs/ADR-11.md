@@ -27,3 +27,9 @@
 ## Failure Modes
 
 - **Breaking schema change without dual-read migration:** Consumer deserialization fails; `ErrorHandlingDeserializer` routes to `payment.events.DLT`. Detection: DLT depth rising. Mitigation: dual-read migration + consumer rollforward.
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-05-20 | @amit | Initial — ACCEPTED. Keeps the relay payload opaque and makes `PaymentEvent` tolerant of unknown JSON fields to decouple relay delivery from event schema evolution. |

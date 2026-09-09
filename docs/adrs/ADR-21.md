@@ -1,5 +1,3 @@
-<!-- edit-log (newest first): v1.0 | 2026-06-29 | Initial. ACCEPTED. -->
-
 ---
 asset_id: adr-21-exception-boundary-discipline
 asset_path: docs/adrs/ADR-21.md
@@ -90,3 +88,9 @@ catches are strictly-better standalone improvements and would stay.
 - Reactive Resilience Architecture — the ladder, boundary catalog, enforcement detail
 - `spring-boot-4.md` — Jackson 3 `JacksonException` is unchecked
 - ArchUnit `TryCatchBlock.getCaughtThrowables()` (1.3.0) — the enforcement primitive
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-06-29 | @amit | Initial — ACCEPTED. Establishes exception-boundary discipline requiring narrow catches by default, restricting broad `Exception` handling to `@BoundaryHandler` code units, enforced via ArchUnit. |

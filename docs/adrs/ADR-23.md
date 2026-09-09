@@ -1,5 +1,3 @@
-<!-- edit-log (newest first): v1.0 | 2026-06-29 | Initial. ACCEPTED. -->
-
 ---
 asset_id: adr-23-dlt-operational-strategy
 asset_path: docs/adrs/ADR-23.md
@@ -167,3 +165,9 @@ strict correctness improvement and would stay regardless. No data-format or cont
 - `deploy/kafka/dlt-redrive.sh` — the re-drive tool; `deploy/kafka/provision-acls.sh` — `rpe-operator` ACLs
 - `monitoring/rules/dlt.rules.yml` — depth SLO alert rules (and the k8s ConfigMap copy)
 - ADR-10 (no auto-replay), ADR-13 (deterministic alert_id), ADR-18 (DLT ownership), ADR-19 (HTTP surface)
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-06-29 | @amit | Initial — ACCEPTED. Establishes a DLT operational strategy featuring operator-gated loop-safe re-drive, per-writer depth SLO alerting, and fixed single-writer DLT topic routing. |

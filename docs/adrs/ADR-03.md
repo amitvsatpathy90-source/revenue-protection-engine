@@ -27,3 +27,9 @@ A hot account saturates its lane. The naive implementation acquires the rate lim
 
 - **Limiter map unbounded growth:** Mitigated by Caffeine `maximumSize(50_000)` + `expireAfterAccess`.
 - **Elevated classification Redis lookup fails:** 60s Caffeine cache covers short outages; on cache miss falls back to default limit — logged at WARN.
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-05-20 | @amit | Initial — ACCEPTED. Moves rate limiting into lane tasks to prevent consumer-thread blocking and preserve payment-event detection signals. |

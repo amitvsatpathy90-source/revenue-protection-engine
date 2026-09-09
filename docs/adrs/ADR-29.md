@@ -121,4 +121,4 @@ leak between architecturally unrelated boundaries) is what would actually be exp
 
 | Date | Version | Author | Change |
 |---|---|---|---|
-| 2026-07-15 | 1.0.0 | amit | Initial — ACCEPTED. Backfills a convention enforced since ADR-01; verified via repo-wide grep (zero `configs:`/`base-config:` blocks) and inspection of `LlmResilienceConfig.java` (`.custom()` throughout). |
+| 2026-07-15 | 1.0.0 | amit | Initial — ACCEPTED. Backfills a convention enforced since ADR-01; verified via repo-wide grep (zero `configs:`/`base-config:` blocks) and inspection of `LlmResilienceConfig.java` (`.custom()` throughout), preventing silent configuration coupling across boundaries. |

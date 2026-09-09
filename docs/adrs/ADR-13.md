@@ -32,3 +32,9 @@ Rationale: the hot path must never touch Postgres per event — throughput is th
 
 - **Redis crash + AOF 1s window:** Events in the last second may replay past dedup gate on restart. Detection: `rpe.dedup.blocked` counter drop post-restart. Correctness: deterministic `alert_id` absorbs any duplicate. No action required.
 - **Dedup TTL expiry on long-silent account:** Event replays after 300s TTL. Handled identically to above.
+
+## Changelog
+
+| Version | Date | Author | Description |
+|---|---|---|---|
+| 1.0.0 | 2026-05-20 | @amit | Initial — ACCEPTED. Documents conscious non-durable event dedup via Redis hot-path + exactness at alert boundary via deterministic UUIDv5 `alert_id`. |
