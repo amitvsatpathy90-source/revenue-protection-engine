@@ -8,6 +8,9 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+        # excludes majors from this group → setup-java 6.0.0-style bumps 
+        # fall out into their own ungrouped PR instead of riding with 4 patches
+        update-types: ["minor", "patch"]
 
   # No root/parent pom (ADR-17 §3.5: no reactor aggregation), so each service is scanned on its own.
   # Each bump PR is validated by that service's `mvn -f <svc>/pom.xml verify` in CI before merge.
@@ -25,11 +28,15 @@ updates:
         patterns:
           - "org.springframework*"
           - "io.spring*"
+        # a Boot/Spring AI major (breaking by definition) can no longer hide inside a patch-only group PR   
+        update-types: ["minor", "patch"] 
       other:
         patterns: ["*"]
         exclude-patterns:
           - "org.springframework*"
           - "io.spring*"
+        # same isolation for non-Spring majors — they can no longer hide inside a patch-only group PR    
+        update-types: ["minor", "patch"]
 
   # Unlike the other two repos, these are named exactly `Dockerfile`, so Dependabot's docker
   # ecosystem picks them up — base-image (eclipse-temurin) bumps land as PRs.
@@ -44,4 +51,15 @@ updates:
     open-pull-requests-limit: 3
     groups:
       base-images:
-        patterns: ["*"]    
+        patterns: ["*"]
+    ignore:
+      # top-level ignore, not update-types — compound Docker tags (21.0.7_6-jre) don't 
+      # reliably classify as semver-major, so filtering by type can't be trusted here  
+      - dependency-name: "eclipse-temurin"
+      # blocks the JDK line jump itself (21→24 crosses two LTS boundaries)
+        versions: [">=22"]
+      # maven base image embeds the JDK version in its own tag (3.9.9-eclipse-temurin-21) 
+      # so it needs its own rule, not inherited from eclipse-temurin's  
+      - dependency-name: "maven"
+      # mirrors the same JDK-21 floor so the maven-image bump can't smuggle a JDK jump past the eclipse-temurin rule
+        versions: [">=3.9.9-eclipse-temurin-22"]
