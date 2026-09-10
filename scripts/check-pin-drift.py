@@ -7,7 +7,7 @@ a build fact: any (groupId, artifactId) declared with an explicit version in TWO
 POMs must resolve to a single version. Parent coordinates count. BOM-managed dependencies
 (no <version> tag) are naturally out of scope.
 
-Renovate (renovate.json) keeps pins aligned on upgrade; this catches manual one-POM edits.
+This catches manual one-POM edits.
 
 Usage: check-pin-drift.py <pom.xml> [<pom.xml> ...]   (exit 1 on drift)
 """
