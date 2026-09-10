@@ -62,8 +62,7 @@ jobs:
   # (ADR-17 §3.5 — no shared parent/BOM to hold pins), so this gate turns version alignment
   # from a convention into a build fact: any coordinate declared in ≥2 POMs must resolve to
   # one version, and all io.github.resilience4j artifacts must share one version repo-wide
-  # (the POMs pin disjoint r4j artifactIds, invisible to per-coordinate checking). Renovate
-  # (renovate.json) keeps pins aligned on upgrade; this catches manual single-POM edits.
+  # (the POMs pin disjoint r4j artifactIds, invisible to per-coordinate checking).
   pin-drift:
     runs-on: ubuntu-latest
     steps:
