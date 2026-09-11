@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  *
  * The alert schema is intentionally duplicated across services — detection's {@code AlertMessage},
  * triage's {@code PaymentAlert}, and this local {@link AlertMessage} — and kept compatible by
- * schema, not shared code (microservices.md §2). {@code @JsonIgnoreProperties(ignoreUnknown = true)}
+ * schema, not shared code (schema contract). {@code @JsonIgnoreProperties(ignoreUnknown = true)}
  * is what lets the relay (producer) add fields to the alert envelope without breaking this consumer.
  *
  * Uses the Jackson 2 {@link ObjectMapper} (same flavour as Spring Kafka's {@code JsonDeserializer});

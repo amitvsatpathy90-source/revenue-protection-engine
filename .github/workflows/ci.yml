@@ -40,12 +40,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: shellcheck scripts/check-migration-safety.sh
 
-  # Migration-compat gate (arch-audit F-09; rule lives in infrastructure config rules). Fails if
+  # Migration-compat gate (zero-downtime schema migration safety gate). Fails if
   # a newly added Flyway migration contains destructive DDL (DROP COLUMN/TABLE, RENAME, SET NOT
   # NULL) with no explicit `-- migration-safety: override <reason>` marker — migrations run
   # in-process at app boot on a rolling deploy, so an unguarded destructive change breaks the
   # OLD version still serving traffic during the deploy window. Relay is Flyway-disabled (owns no
-  # tables, infra-config.md) — not in this list on purpose.
+  # tables) — not in this list on purpose.
   migration-safety:
     runs-on: ubuntu-latest
     steps:

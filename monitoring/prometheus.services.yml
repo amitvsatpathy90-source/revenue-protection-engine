@@ -3,7 +3,7 @@
 # compose network, so targets are service-name DNS — NOT host.docker.internal (that is the
 # dev all-in-one config in ./prometheus.yml, where detection runs on the host via mvn).
 #
-# One scrape job per deployable; each exposes its own /actuator/prometheus (security.md:
+# One scrape job per deployable; each exposes its own /actuator/prometheus (the security discipline:
 # no account_id / PII / high-cardinality label — tag by rule_type/outcome only).
 global:
   scrape_interval: 15s

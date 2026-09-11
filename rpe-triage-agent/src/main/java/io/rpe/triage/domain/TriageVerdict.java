@@ -8,7 +8,7 @@ import java.util.List;
  * The LLM's structured output — exactly what the model produces, nothing more.
  * Bound via Spring AI structured output; any parse or validation failure routes
  * to the degraded verdict and is NEVER retried (same input ⇒ same garbage,
- * doubled cost — ai-triage-rules.md §3).
+ * doubled cost — the triage agent design discipline).
  *
  * Every {@code evidence} item must reference a tool-call ID from THIS run;
  * {@code EvidenceValidator} drops unmatched items (prompt-injection containment).

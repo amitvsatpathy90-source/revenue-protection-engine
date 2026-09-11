@@ -31,7 +31,7 @@ import java.util.function.Supplier;
  * Every provider round-trip goes through this decorator chain — the LLM is the
  * system's least reliable, most expensive outbound dependency (ADR-15).
  *
- * Decorator order, innermost → outermost (ai-triage-rules.md §5 — BINDING):
+ * Decorator order, innermost → outermost (the triage agent design discipline — BINDING):
  *
  *   LLM call → Retry → TimeLimiter → Bulkhead → RateLimiter → CircuitBreaker
  *

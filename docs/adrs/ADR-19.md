@@ -19,7 +19,7 @@ tags: [security, zero-trust, actuator, oauth2, resource-server, jwt, prometheus,
 
 Supersedes: nothing.
 Related: ADR-17 (Kafka-only async; per-service ownership), ADR-01 (WebFlux/Netty HTTP surface),
-ADR-13 (deterministic `alert_id` as cross-service join key), internal security rules,
+ADR-13 (deterministic `alert_id` as cross-service join key), the security discipline,
 `ADR-19.md`.
 
 ---
@@ -149,7 +149,7 @@ requires that **reachability ≠ authorization** even for an internal Prometheus
 - ADR-01 — WebFlux/Netty HTTP surface (detection); MVC elsewhere
 - ADR-13 — deterministic `alert_id` as the cross-service join key
 - `ADR-19.md` — enforcement detail
-- internal security rules — PII/actuator-exposure rules (now asserted *and* authenticated)
+- the security discipline — PII/actuator-exposure rules (now asserted *and* authenticated)
 - Spring Security 7.0 reactive/servlet resource-server DSL; Nimbus JWKS decoder
 
 ## Changelog

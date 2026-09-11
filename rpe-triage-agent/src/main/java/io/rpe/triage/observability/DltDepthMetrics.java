@@ -26,7 +26,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * {@code rpe.dlt.depth{topic=...}} for the DLTs {@code rpe-triage-agent} solely writes (ADR-23).
  *
- * Per-service copy of the detection-service poller (no shared jar — microservices.md §1.4),
+ * Per-service copy of the detection-service poller (no shared jar),
  * symmetric with {@code Pii} / {@code KafkaSecurity} / {@code BoundaryHandler}. Triage owns its
  * input-side DLT {@code payment.alerts.triage.DLT} (ADR-18) — NOT {@code payment.alerts.DLT}; it
  * must never poll a topic it does not own. The {@code .parked} topic holds alerts that re-poisoned
@@ -48,7 +48,7 @@ public class DltDepthMetrics {
     private static final long ADMIN_TIMEOUT_SEC = 5;
 
     // The shared, transport-authenticated Admin bean (KafkaTriageConfig#triageAdminClient) — it
-    // carries the securityProps fold (kafka-security.md §4); a locally-created Admin would be
+    // carries the securityProps fold (ADR-20); a locally-created Admin would be
     // credential-less under SASL and silently freeze every gauge below at 0.
     private final Admin admin;
     private final Map<String, AtomicLong> depthByTopic = new ConcurrentHashMap<>();

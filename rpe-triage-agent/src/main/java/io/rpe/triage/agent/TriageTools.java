@@ -25,7 +25,7 @@ import java.util.concurrent.ExecutorService;
 
 /**
  * Phase-1 tools (ADR-15 §3.4). ALL READ-ONLY — a tool needing a write is a design
- * error; stop and re-anchor (ai-triage-rules.md §1.3). Never writes to outbox,
+ * error; stop and re-anchor (the triage agent design discipline). Never writes to outbox,
  * processed_alerts, payment.alerts, or any core Redis key.
  *
  * <b>Account scoping (injection containment):</b> the model supplies {@code accountId}

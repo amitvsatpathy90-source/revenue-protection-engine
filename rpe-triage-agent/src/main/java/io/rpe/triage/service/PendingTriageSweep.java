@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * Re-emits DEGRADED verdicts for rows stuck in PENDING_TRIAGE — the crash window
- * between inbox insert and verdict publish (ai-triage-rules.md §2).
+ * between inbox insert and verdict publish (the triage agent design discipline).
  *
  * NEVER re-calls the LLM for swept rows: the inbox row already exists, the original
  * LLM result is gone, and degraded is the correct answer. Re-calling would turn

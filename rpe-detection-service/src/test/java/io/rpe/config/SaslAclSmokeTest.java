@@ -48,7 +48,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The SASL/ACL smoke run (kafka-security.md test bar) — MANUAL, not CI:
+ * The SASL/ACL smoke run (the Kafka transport-security discipline) — MANUAL, not CI:
  *
  * <pre>
  *   RPE_SASL_SMOKE=true mvn -f rpe-detection-service/pom.xml -q test -Dtest=SaslAclSmokeTest
@@ -267,7 +267,7 @@ class SaslAclSmokeTest {
                 .isEqualTo(200);
     }
 
-    /** The REAL production transport assembly — this is the fold under test (kafka-security.md §4). */
+    /** The REAL production transport assembly — this is the fold under test (ADR-20). */
     private static Map<String, Object> clientProps(String username) {
         Map<String, Object> props = new HashMap<>(
                 KafkaSecurity.transportProps("SASL_PLAINTEXT", MECHANISM, username, PW, "", ""));

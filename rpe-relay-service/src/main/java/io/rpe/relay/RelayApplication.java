@@ -16,7 +16,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
  * runs the poll loop; all JDBC runs on a dedicated platform-thread pool (PgJDBC
  * {@code synchronized} pins VT carriers). No WebFlux, no Redis, no Kafka consumer.
  *
- * Independent deployability (ADR-17 §3.5 / microservices.md §4): boots and drains the
+ * Independent deployability (ADR-17 §3.5): boots and drains the
  * existing outbox with detection absent. Cross-process wakeup is the V4 Postgres
  * {@code pg_notify('outbox_ready')} trigger (detection's in-process signal is gone —
  * "no-op when relay is extracted", ADR-05).
@@ -25,7 +25,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 // observability beans (TraceContextReader — ADR-25; RelayListenerHealthIndicator) live in the
 // sibling io.rpe.observability. Default scan (the app's own package) would miss them —
 // which had silently left RelayListenerHealthIndicator unregistered. Scan from the common root,
-// matching detection's model. No cross-service code is on the relay classpath (microservices.md
+// matching detection's model. No cross-service code is on the relay classpath (decoupled module architecture)
 // §1.4: no shared jar), so the wider scan only ever sees this service's own packages.
 @SpringBootApplication(scanBasePackages = "io.rpe")
 @EnableConfigurationProperties(RelayProperties.class)

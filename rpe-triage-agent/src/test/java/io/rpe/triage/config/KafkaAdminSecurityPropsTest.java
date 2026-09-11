@@ -11,8 +11,8 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Pins the admin-client transport-security fold (kafka-security.md §4, ADR-20). Per-service copy
- * of the detection-service test (no shared jar — microservices.md §1.4).
+ * Pins the admin-client transport-security fold (ADR-20). Per-service copy
+ * of the detection-service test (no shared jar).
  *
  * The shared {@code triageAdminClient} bean feeds both observability pollers
  * ({@code DltDepthMetrics}, {@code TriageLagMetrics}). Without the securityProps fold it

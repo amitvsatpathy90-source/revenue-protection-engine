@@ -68,11 +68,11 @@ public class AlertKafkaConfig {
 
     /**
      * Shared {@link Admin} client for the observability pollers ({@code DltDepthMetrics}).
-     * Per-service copy of the detection-service bean (no shared jar — microservices.md §1.4).
+     * Per-service copy of the detection-service bean (no shared jar).
      *
      * <p>Built from Boot's autoconfigured admin properties PLUS the same transport-security props
      * as every factory in this class — the admin client is a Kafka client like any other
-     * (kafka-security.md §4). Without this fold a SASL_SSL stack leaves the admin client
+     * (ADR-20). Without this fold a SASL_SSL stack leaves the admin client
      * credential-less: every depth poll fails, the {@code @BoundaryHandler} poller absorbs the
      * failures, and every {@code rpe.dlt.depth} gauge freezes at its boot value 0 —
      * false-healthy, silently disarming the ADR-23 RpeDlt* alerts. Pinned by
@@ -162,7 +162,7 @@ public class AlertKafkaConfig {
      * <b>Byte-faithful poison records:</b> {@code ErrorHandlingDeserializer} failures restore the
      * original {@code byte[]} value; a lone {@code JsonSerializer} template would base64-wrap them
      * (Spring Kafka ref). The type-map routes {@code byte[]} through a {@code ByteArraySerializer}
-     * template so {@code payment.alerts.DLT} stays byte-faithful for forensics (security.md).
+     * template so {@code payment.alerts.DLT} stays byte-faithful for forensics (per the security discipline).
      */
     @Bean
     public DeadLetterPublishingRecoverer dltRecoverer(

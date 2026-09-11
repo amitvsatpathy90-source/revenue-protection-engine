@@ -5,7 +5,7 @@
 # - PII suppression: account_id and event_id span attributes are masked/dropped
 #   before leaving the collector. Raw values never leave the pod boundary.
 #
-# Security rule (security.md): never use account_id or PII as span attribute.
+# PII-safety per the security discipline: never use account_id or PII as span attribute.
 # The processor below masks any that slip through from the Java agent.
 apiVersion: opentelemetry.io/v1beta1
 kind: OpenTelemetryCollector
@@ -35,7 +35,7 @@ spec:
         send_batch_size: 1000
         timeout: 5s
       # PII suppression: mask high-cardinality / PII span attributes.
-      # account_id → last 4 chars only (matches log redaction rule in security.md).
+      # account_id → last 4 chars only (matches the security discipline's log redaction rule).
       # event_id   → kept as correlation key (masked to 8-char prefix only in spans).
       # Coordinates (lat/lon) never appear in spans — they live in Redis only.
       attributes/pii-suppress:

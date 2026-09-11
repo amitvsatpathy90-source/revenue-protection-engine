@@ -6,7 +6,7 @@
 
   Token bucket, NOT fixed-window INCR+EXPIRE: a fixed window has the boundary-burst
   exploit (2× rate at the window edge) that this codebase already rejects for the
-  velocity detector (lua-gate.md). The bucket is semantically identical to the Guava
+  velocity detector (the atomic detection-gate discipline). The bucket is semantically identical to the Guava
   limiter it replaces — smoothed rate + a ~1s burst capacity — so the Java contract
   (tryAcquire → boolean) is unchanged.
 

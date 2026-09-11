@@ -25,7 +25,7 @@ import java.util.UUID;
  * fresh transaction, so a duplicate record DOES land on {@code payment.alerts}. Exactly-once is
  * realized only at the consumer, by idempotent recording keyed on the deterministic {@code alert_id}
  * ({@code processed_alerts ON CONFLICT DO NOTHING}; triage inbox {@code ON CONFLICT}). Every
- * {@code payment.alerts} consumer MUST dedupe — a non-idempotent consumer double-acts (kafka-consumer.md).
+ * {@code payment.alerts} consumer MUST dedupe — a non-idempotent consumer double-acts (consumer idempotency).
  * (The batch-wide {@code conn.commit()} in {@link OutboxRelay} widens this re-send window to the
  * whole batch on a crash; consumer dedup absorbs it either way.)
  *

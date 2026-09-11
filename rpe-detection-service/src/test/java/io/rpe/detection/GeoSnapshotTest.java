@@ -6,7 +6,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Pins the GeoSnapshot constructor guards (ADR-14 / lua-gate.md).
+ * Pins the GeoSnapshot constructor guards (ADR-14).
  *
  * Guard ORDER is load-bearing: NaN before range (NaN comparisons are silently false,
  * so the range check alone passes NaN through). Exception messages must describe the

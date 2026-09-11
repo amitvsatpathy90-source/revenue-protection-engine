@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * Marks the start of a graceful shutdown (ADR-22). Per-service copy — no shared jar
- * (microservices.md §1.4), symmetric with {@code Pii} / {@code KafkaSecurity} / {@code BoundaryHandler}.
+ * (the service-independence discipline), symmetric with {@code Pii} / {@code KafkaSecurity} / {@code BoundaryHandler}.
  *
  * The alert consumer is a SYNCHRONOUS listener: the Kafka container's stop() already awaits the
  * in-flight {@code consume()} (insert → ack) before the container terminates, so no custom drain

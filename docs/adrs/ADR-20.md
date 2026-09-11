@@ -43,7 +43,7 @@ and a **per-service identity**. That ownership matrix *is* the least-privilege A
    authenticates the client. **mTLS is the documented alternative** (no shared secret, at the
    cost of a client-cert lifecycle) for deployments already running a mesh CA.
 2. **Credentials from env, assembled in code.** A per-service `KafkaSecurity` helper (copy, not
-   a shared jar — microservices.md §1.4) folds username/password into the `sasl.jaas.config`
+   a shared jar — service-independence discipline) folds username/password into the `sasl.jaas.config`
    string in memory. The secret never appears in `application.yml`, logs, or `/actuator/configprops`.
 3. **Fail-closed.** When `rpe.kafka.security.protocol` is `SASL_*` and credentials are missing,
    startup aborts (same discipline as `DB_PASSWORD` / ADR-19). `PLAINTEXT` is an explicit lab

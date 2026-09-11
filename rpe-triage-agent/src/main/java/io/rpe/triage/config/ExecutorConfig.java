@@ -15,7 +15,7 @@ public class ExecutorConfig {
     /**
      * Dedicated BOUNDED platform pool for all JDBC (inbox + processed_alerts tool).
      * PgJDBC {@code synchronized} pins VT carriers — same JVM constraint as the core
-     * module (ai-triage-rules.md §2). Triage volume is ~1% of events; 4 threads is ample.
+     * module (the triage agent design discipline). Triage volume is ~1% of events; 4 threads is ample.
      */
     @Bean(destroyMethod = "shutdown")
     public ExecutorService jdbcExecutor() {

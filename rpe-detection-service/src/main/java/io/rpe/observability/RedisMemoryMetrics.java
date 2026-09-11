@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * {@code rpe.redis.used_memory.bytes} / {@code rpe.redis.maxmemory.bytes} — the ADR-27 memory
- * watermark. Detection is the sole Redis owner (microservices.md §3), so it owns this gauge.
+ * watermark. Detection is the sole Redis owner (the service-independence discipline), so it owns this gauge.
  *
  * Why it exists: under {@code volatile-lru}, memory pressure evicts the TTL'd dedup/vel/geo
  * working set FIRST — detection quality decays silently (missed velocity/geo alerts look like a
@@ -58,7 +58,7 @@ public class RedisMemoryMetrics {
         try {
             // No publishOn here, deliberately: the Mono is materialized by block() on THIS
             // scheduled platform thread and has no downstream operators, so nothing user-supplied
-            // executes on the Lettuce I/O thread — the hazard reactive-pipeline.md's publishOn
+            // executes on the Lettuce I/O thread — the hazard the reactive-pipeline discipline
             // rule guards against on the hot path. A publishOn would be dead code in this shape.
             Properties info = redis.execute(conn -> conn.serverCommands().info("memory"))
                     .next()

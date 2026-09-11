@@ -25,13 +25,13 @@ import java.time.Duration;
 /**
  * Zero-trust Actuator hardening for the relay (servlet surface, ADR-19). Identical policy to
  * the detection reactive chain, expressed in the {@code HttpSecurity} idiom. Per-service copy
- * by design (no shared rpe-common jar, microservices.md §1.4).
+ * by design (no shared rpe-common jar).
  *
  * <p>{@link ConditionalOnWebApplication}(SERVLET) is load-bearing: the integration test boots
  * with {@code webEnvironment = NONE} where {@code HttpSecurity} does not exist; gating keeps
  * these beans (and the fail-closed decoder) out of non-web contexts so the suite still loads.
  *
- * <p>NOTE (spring-boot-4.md): verify the Security 7.0 servlet lambda DSL + SimpleClientHttp
+ * <p>NOTE: verify the Security 7.0 servlet lambda DSL + SimpleClientHttp
  * timeout overloads against the changelog before promoting.
  */
 @Configuration

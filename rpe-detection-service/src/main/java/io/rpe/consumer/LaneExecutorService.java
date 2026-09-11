@@ -174,7 +174,7 @@ public class LaneExecutorService {
      * lane worker for the same account — geo read-before-write races (both read the same
      * prev location); (b) the inline event processed out of offset order. It also parked
      * the listener up to 5s inside RateLimiterService.tryAcquire — the exact anti-pattern
-     * kafka-consumer.md marks WRONG.
+     * the consumer-idempotency discipline.
      *
      * This policy parks the SUBMITTER on the queue until capacity frees instead. The
      * backpressure signature is identical (a parked listener cannot poll; consumer lag

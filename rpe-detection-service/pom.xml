@@ -45,7 +45,7 @@
         </dependency>
 
         <!-- Structured JSON logging (RPE-13): masked event_id/account_id + trace/span ids become
-             first-class aggregator fields (the alert_id/MDC cross-service join, security.md). Not in
+             first-class aggregator fields (the alert_id/MDC cross-service join for the security discipline). Not in
              the Boot BOM — pin explicitly (compatible with Boot 4.1's logback 1.5.x). -->
         <dependency>
             <groupId>net.logstash.logback</groupId>

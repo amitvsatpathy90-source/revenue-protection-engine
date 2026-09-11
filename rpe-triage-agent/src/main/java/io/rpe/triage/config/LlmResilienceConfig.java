@@ -32,7 +32,7 @@ import org.springframework.context.annotation.Configuration;
 import java.time.Duration;
 
 /**
- * Builds the LLM Resilience4j boundary from {@code triage.llm.*} (ai-triage-rules.md §5).
+ * Builds the LLM Resilience4j boundary from {@code triage.llm.*} (LLM resilience contract).
  * Per-boundary config, no global defaults — same discipline as the core module.
  *
  * The CB is slow-call-rate based IN ADDITION to error rate: provider degradation

@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * Marks the start of a graceful shutdown (ADR-22). Per-service copy — no shared jar
- * (microservices.md §1.4), symmetric with {@code Pii} / {@code KafkaSecurity} / {@code BoundaryHandler}.
+ * (the service-independence discipline), symmetric with {@code Pii} / {@code KafkaSecurity} / {@code BoundaryHandler}.
  *
  * {@link ContextClosedEvent} is published at the very start of context close — BEFORE any
  * {@link org.springframework.context.SmartLifecycle#stop()} and before bean destruction. We use

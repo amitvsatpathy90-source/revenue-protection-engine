@@ -14,7 +14,7 @@ import java.util.UUID;
  * Rule-based degraded verdict — the path that must work with the LLM permanently
  * absent (ADR-15 §3.7).
  *
- * HARD CONSTRAINT (ai-triage-rules.md §5): this class has ZERO Spring AI imports.
+ * HARD CONSTRAINT (the triage agent design discipline): this class has ZERO Spring AI imports.
  * It must compile and run with the Spring AI dependency deleted from the pom.
  * Do not add Spring AI types here — route LLM-shaped logic to TriageAgent instead.
  */

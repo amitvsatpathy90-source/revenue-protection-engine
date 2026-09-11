@@ -8,8 +8,7 @@
 # (deploy/k8s/observability/54-prometheus.yaml) — there is no kustomize/generation step, so the
 # copies are kept in sync by hand. The 2026-07 arch audit (R6) found they had already drifted in
 # their annotations; the next drift lands in expr/for and prod alerts silently diverge from the
-# documented ones. This script is the mechanical guard dlt-operations.md's "both copies must stay
-# in sync" rule relies on.
+# documented ones. This script enforces the Prometheus config parity check: "both copies must stay in sync."
 #
 # Scope: functional fields only. Annotations/summaries/comments MAY differ (the k8s copy is
 # deliberately terser); an expr/for/labels/alert-set difference is a FAILURE.

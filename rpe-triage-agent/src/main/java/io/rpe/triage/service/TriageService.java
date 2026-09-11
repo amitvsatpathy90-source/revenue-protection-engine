@@ -14,8 +14,8 @@ import io.rpe.triage.config.BoundaryHandler;
 import org.springframework.stereotype.Service;
 
 /**
- * Orchestrates the ordering invariant (ai-triage-rules.md §2) — "the one that costs
- * money when wrong":
+ * Orchestrates the ordering invariant (the triage agent design discipline) — "the one
+ * that costs money when wrong":
  *
  * <pre>
  * consume → inbox INSERT ON CONFLICT DO NOTHING (alert_id)

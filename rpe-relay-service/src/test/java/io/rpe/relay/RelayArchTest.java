@@ -20,7 +20,7 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
 
 /**
- * ArchUnit guards for the relay service (microservices.md §7) — the same silent-failure
+ * ArchUnit guards for the relay service (the service-independence discipline) — the same silent-failure
  * constraints enforced in the core module, now asserted within this service.
  */
 class RelayArchTest {
@@ -45,7 +45,7 @@ class RelayArchTest {
         rule.check(classes);
     }
 
-    /** synchronized pins virtual-thread carriers — use ReentrantLock (reactive-pipeline.md). */
+    /** synchronized pins virtual-thread carriers — use ReentrantLock (virtual thread pinning constraint). */
     @Test
     void noSynchronizedMethods() {
         ArchRule rule = noMethods().should().haveModifier(JavaModifier.SYNCHRONIZED);
@@ -55,7 +55,7 @@ class RelayArchTest {
     /**
      * ADR-17 §7 Stage 4 — no cross-service package dependency. The relay forwards the opaque
      * outbox payload byte-identically (ADR-11) and never deserializes it to a core DTO; it shares
-     * the outbox as a schema, not code (microservices.md §1.4/§2). This tripwire fails if anyone
+     * the outbox as a schema, not code (the service-independence discipline). This tripwire fails if anyone
      * adds a Maven dependency on a sibling service — including detection's core (Detector set /
      * Lua gate), which must never be referenced across the service boundary.
      */
@@ -78,7 +78,7 @@ class RelayArchTest {
      * Broad catch (Exception/Throwable) is permitted ONLY inside a @BoundaryHandler code unit
      * (or class) — a deliberate last line of defense at a thread/loop/listener/scheduler frame.
      * Elsewhere catch the specific exception, or RuntimeException (the allowed narrower rung).
-     * Bans accidental broad catches in domain logic (error-boundaries.md / ADR-21).
+     * Bans accidental broad catches in domain logic (ADR-21).
      */
     @Test
     void broadCatchOnlyInBoundaryHandlers() {
@@ -98,7 +98,7 @@ class RelayArchTest {
                         // Only java.lang.Exception — NOT Throwable: try-with-resources desugars to
                         // a synthetic catch(Throwable) for resource cleanup, which is not a real
                         // broad catch. The codebase has zero hand-written Throwable catches
-                        // (error-boundaries.md residual R-twr).
+                        // (the error-boundary discipline).
                         boolean broad = block.getCaughtThrowables().stream()
                                 .map(JavaClass::getName)
                                 .anyMatch(n -> n.equals("java.lang.Exception"));

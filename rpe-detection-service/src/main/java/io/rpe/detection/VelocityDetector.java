@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
  * fixes the {@code alert_id} (UUIDv5). That order MUST be pinned: an unordered bean list resolves
  * to Spring's unspecified registration order, so a reorder would silently change the winning rule
  * — and therefore {@code alert_id} — for the same event, breaking {@code processed_alerts} dedup
- * on replay (lua-gate.md). Precedence is part of the alert-id contract; assert it in a test.
+ * on replay (the atomic detection-gate discipline). Precedence is part of the alert-id contract; assert it in a test.
  */
 @Component
 @Order(10)

@@ -11,8 +11,8 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Pins the admin-client transport-security fold (kafka-security.md §4, ADR-20). Per-service copy
- * of the detection-service test (no shared jar — microservices.md §1.4).
+ * Pins the admin-client transport-security fold (ADR-20). Per-service copy
+ * of the detection-service test (no shared jar — schema contract only).
  *
  * Without the securityProps fold the observability {@code Admin} client connects credential-less
  * under SASL_SSL: every depth poll fails inside the {@code @BoundaryHandler} poller and every
