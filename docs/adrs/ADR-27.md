@@ -95,7 +95,7 @@ wedge.
 - One extra O(1) `PEXPIRE` per event inside the atomic script — negligible against the existing
   ZADD/ZREMRANGEBYSCORE/HSET work.
 - The loss mode is invisible per-account (no per-key expiry metric; unbounded cardinality would
-  violate security.md's tag rules). Accepted — the aggregate watermark is the signal.
+  violate internal security rules' tag conventions). Accepted — the aggregate watermark is the signal.
 
 ## Residual Risks (explicit)
 

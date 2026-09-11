@@ -23,7 +23,7 @@ Tempo → Grafana pipeline from Stage 6 is **retained**; only the *instrumentati
 Related: ADR-01 (runtime-surface split — tracing is wired per surface), ADR-11/17 (the outbox is a
 schema contract; the new columns are additive), ADR-13 (deterministic `alert_id` — the other
 cross-service join key), ADR-15 (the triage LLM span), ADR-19 (Actuator is the only HTTP surface;
-tracing adds no endpoint), security.md (PII rule — no `account_id`/payload in spans),
+tracing adds no endpoint), internal security rules (PII rule — no `account_id`/payload in spans),
 `ADR-25.md` (enforcement detail).
 
 ## Context
@@ -76,7 +76,7 @@ explicitly:
   trace context does **not** survive `lane.submit()` — explicit threading (like `brokerIngestMs` and
   MDC already are) is correct and robust to the reactive Redis hop, not ambient magic.
 - the writer persists them as **two new nullable `outbox` columns** (`traceparent`, `tracestate`;
-  Flyway `V5`, additive per ADR-11 / microservices.md §2).
+  Flyway `V5`, additive per ADR-11 / microservices decomposition rules §2).
 - the relay **restores** the persisted context as a remote parent (`TraceContextReader.continueTrace`)
   and publishes within it; the observation-enabled relay template then emits the `payment.alerts`
   produce span as a **continuous child** and injects the header downstream. One trace, end to end,
@@ -86,7 +86,7 @@ explicitly:
 `Tracer` on the classpath it emits the `gen_ai` client span under the triage consume span — no change
 to `TriageLlmClient` (its R4j decorator chain and `triage.llm.latency` metric are untouched).
 
-**5. PII discipline (security.md, unchanged).** Span names are operation names (`rpe.outbox.relay`,
+**5. PII discipline (internal security rules, unchanged).** Span names are operation names (`rpe.outbox.relay`,
 `payment.alerts send`); no `account_id`, no payload, no coordinates as span attributes. Correlation
 rides the masked `event_id`/`account_id` in logs + the deterministic `alert_id` (ADR-13). The
 collector's `attributes/pii-suppress` processor stays as belt-and-suspenders.
@@ -132,7 +132,7 @@ that surface is covered by Spring observation + the manual outbox span.
 - **R3 — Sampling at 1.0 is lab scope.** At production volume this is too much; tie the probability
   to traffic (and consider tail sampling in the collector). The persisted `traceparent` carries the
   sampled flag, so a not-sampled trace still stitches correctly; only export volume changes.
-- **R4 — Span cardinality / PII.** Span attributes must never carry `account_id`/payload (security.md);
+- **R4 — Span cardinality / PII.** Span attributes must never carry `account_id`/payload (internal security rules);
   enforced by review + the collector's `attributes/pii-suppress`. New manual spans must keep this bar
   (`ADR-25.md`).
 - **R5 — Exporter back-pressure.** A wedged collector fills the batch span processor queue; OTel

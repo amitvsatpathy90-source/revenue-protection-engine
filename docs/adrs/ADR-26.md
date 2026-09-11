@@ -32,7 +32,7 @@ ADR-22 (the forced-drain "uncommitted offset ⇒ redelivery" claim this underwri
 ## Context
 
 RPE's entire crash-safety story rests on one sentence, repeated across ADR-02, ADR-12, ADR-22 and
-`kafka-consumer.md`: **"an uncommitted Kafka offset means the event is redelivered on restart, so
+the Kafka consumer rules: **"an uncommitted Kafka offset means the event is redelivered on restart, so
 losing an in-flight/buffered event is not data loss."** The audit found that sentence was **not true**
 as built, for three independent reasons.
 
@@ -120,7 +120,7 @@ is reconstructed straight to the outbox:
   returned "saturated". The `DeadLetterPublishingRecoverer.headersFunction` stamps
   `x-rpe-outcome=ALERT_UNDURABLE`, `x-rpe-rule=<ruleName>`, `x-rpe-reason=<reason>` on the DLT record,
   making it **self-sufficient**. (`reason` rides the header, never the exception *message* — the
-  message carries the rule name only, per security.md fingerprint-PII discipline.)
+  message carries the rule name only, per internal security rules fingerprint-PII discipline.)
 - On consume, `PaymentEventConsumer.handleRedrivenDuplicate` detects a re-driven record (the
   `x-redrive-attempts` header the script stamps, ADR-23) that is dedup-blocked. If it carries
   `ALERT_UNDURABLE` + a rule, the alert is reconstructed **deterministically** —

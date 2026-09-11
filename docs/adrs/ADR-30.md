@@ -32,7 +32,7 @@ Both calls execute after the inbox dedup insert and before the LLM call, and are
 - **`QuestionAnswerAdvisor`** — rejected for the same reason as `RetrievalAugmentationAdvisor` above (requires `ChatClient`), not (as v1.0 stated) in favor of the other Advisor for future multi-corpus routing. Neither Advisor fits this module's architecture; the multi-corpus-routing need (v2 historical-alerts corpus) is met by `RagRetrievalClient` accepting a corpus/collection parameter, no Advisor required.
 - **`VectorStore.similaritySearch(String)` as a single call** — rejected. Technically simpler, but collapses the embedding and retrieval sub-boundaries into one CB/timeout, which cannot satisfy ADR-29's independence invariant at the granularity this ADR's Negative section specifies (see Decision, above). Would require walking back the "independent sub-boundary" language rather than implementing it.
 - **Ollama / local embedding model** — rejected. ADR-15 §3.10 already rules out local-model fallback ("8GB host constraint"); no reason to add a second provider dependency for embeddings alone.
-- **Retrieval before the inbox insert** — rejected; the insert must stay unconditionally first (`ai-triage-rules.md` §2), and a pre-insert retrieval call risks delaying the dedup gate itself.
+- **Retrieval before the inbox insert** — rejected; the insert must stay unconditionally first (the AI triage ruleset §2), and a pre-insert retrieval call risks delaying the dedup gate itself.
 - **Shared R4j instance with `triage.llm`** — rejected per ADR-29. Different call shape, separate OpenAI rate-limit tier, and a shared CB would let RAG failures throttle chat capacity.
 - **Retrieval query built from raw alert fields (merchant/memo)** — rejected. Attacker-controlled free-text shaping which corpus chunks return is a targeted-retrieval / information-disclosure vector, distinct from content injection; a fixed structured-field query removes attacker control over the query, not just the answer.
 - **Retrieval query issued directly on the triage consumer's virtual thread** — rejected. Would violate the repo-wide "JDBC on dedicated platform-thread pool" Immutable Constraint; the pgvector query gets no exemption.
@@ -70,7 +70,7 @@ Both calls execute after the inbox dedup insert and before the LLM call, and are
 - `docs/adrs/ADR-15.md` — parent decision this ADR extends
 - `docs/adrs/ADR-29.md` — no-global-R4j-defaults rule
 - `CLAUDE.md` Immutable Constraints — JDBC-dedicated-pool rule; shutdown-order/timeout-trio discipline (same reasoning pattern applied here)
-- `.claude/rules/ai-triage-rules.md` §2, §4 (needs addendum for third injection path), §5, §7 (testing bar additions) — **section-number citations here are provisional pending a rules-file restructure; the current file has no numbered subsections (see Residuals)**
+- the AI triage ruleset §2, §4 (needs addendum for third injection path), §5, §7 (testing bar additions) — **section-number citations here are provisional pending a rules-file restructure; the current file has no numbered subsections (see Residuals)**
 - `deploy/k8s/netpol/41-allow-paths.yaml` — existing egress coverage, no netpol change required
 - Spring AI `VectorStore` interface (verified 2026-09-05): `similaritySearch(SearchRequest)` / `similaritySearch(String)` only, no vector-input overload — grounds the "why not `VectorStore` directly" call in Decision, above.
 
@@ -94,11 +94,11 @@ Both calls execute after the inbox dedup insert and before the LLM call, and are
 | HNSW build params, `vector_store` backup/restore | Low-severity, pre-existing, still open |
 | `DegradedTriageFallback` ArchUnit enforcement | No structural guard exists; RAG raises the stakes on an already-flagged gap — diff drafted, held |
 | `TriageVectorRepository` interface — future backend swap cost | Bounded to one class by design (Decision, above); embedding-dimension lock-in (vector(1536), HNSW index) still requires a migration on provider switch, not eliminated by the interface |
-| `ai-triage-rules.md` section-number citations | File has four flat headers (Boundary, Pipeline shape, Rules, Known limitations), no numbered subsections — code comments and this ADR cite `§2`–`§7` that don't resolve. Fix pending: either restructure the rules file with real headers matching current citation granularity, or de-scope the citations. Not yet decided. |
+| AI triage ruleset section-number citations | File has four flat headers (Boundary, Pipeline shape, Rules, Known limitations), no numbered subsections — code comments and this ADR cite `§2`–`§7` that don't resolve. Fix pending: either restructure the rules file with real headers matching current citation granularity, or de-scope the citations. Not yet decided. |
 
 ---
 
-### Testing Bar Additions (extends `ai-triage-rules.md` §7)
+### Testing Bar Additions (extends the AI triage ruleset §7)
 
 1. **Retrieval-CB fallback test** — stubbed slow/failing `RagRetrievalClient` ⇒ `triage.rag.retrieval` CB opens independently of `triage.rag.embedding` and `triage.llm`; verdict produces with `rag_context_used=false`; no consumer-lag stall; chat LLM call proceeds normally.
 2. **Retrieved-chunk injection corpus test** — rule-doc chunks containing instruction-like text ⇒ schema-valid verdicts, no evidence items lacking tool-call IDs, no verbatim compliance with injected instructions in `narrative`.

@@ -19,7 +19,7 @@ tags: [security, zero-trust, actuator, oauth2, resource-server, jwt, prometheus,
 
 Supersedes: nothing.
 Related: ADR-17 (Kafka-only async; per-service ownership), ADR-01 (WebFlux/Netty HTTP surface),
-ADR-13 (deterministic `alert_id` as cross-service join key), `security.md`,
+ADR-13 (deterministic `alert_id` as cross-service join key), internal security rules,
 `ADR-19.md`.
 
 ---
@@ -67,7 +67,7 @@ requires that **reachability ≠ authorization** even for an internal Prometheus
 4. **Fail-closed.** `rpe.security.oauth2.issuer` and `jwk-set-uri` have **no defaults** — a
    missing env var aborts startup (same discipline as `DB_PASSWORD`). There is deliberately
    **no `security.enabled` flag**: a toggle is a silent-insecure bypass and violates the
-   no-feature-flags rule (`reactive-pipeline.md`).
+   no-feature-flags rule (the reactive pipeline rules).
 
 5. **Audience binding is mandatory** (`AudienceValidator`) — closes the OAuth2 confused-deputy
    hole (a signature-valid token minted for another relying party must not be accepted).
@@ -108,7 +108,7 @@ requires that **reachability ≠ authorization** even for an internal Prometheus
 
 **Negative:**
 - Boot now depends on JWKS reachability (fail-closed). An IdP outage blocks fresh starts.
-- +1 config class + 1 validator per service to keep behaviorally in sync (pinned by `actuator-security.md`).
+- +1 config class + 1 validator per service to keep behaviorally in sync (pinned by the actuator security rules).
 - The canonical compose / k8s topologies now require `RPE_OAUTH_ISSUER` + `RPE_OAUTH_JWKS_URI` to be wired (a local Keycloak or static JWKS) — services will not boot otherwise. Tracked as a follow-up infra task.
 
 ---
@@ -121,7 +121,7 @@ requires that **reachability ≠ authorization** even for an internal Prometheus
 | JWKS key rotation mid-run | Nimbus refetches on unknown `kid`; bounded timeout prevents a hung refresh. Overlap-publish old+new keys during rotation. |
 | Confused-deputy (valid-issuer token, wrong audience) | Rejected by `AudienceValidator` (unit-tested). |
 | Bearer token theft | Blast radius bounded to read-only `metrics:scrape` + this audience; short TTL. Recommend mesh mTLS as a second factor (residual R2). |
-| `show-details: always` regression | `actuator-security.md` rule + follow-up integration assertion that unauthenticated `/actuator/health` is detail-free. |
+| `show-details: always` regression | actuator security rule + follow-up integration assertion that unauthenticated `/actuator/health` is detail-free. |
 | Prometheus token expired/missing | Scrape returns 401 → target flips `down` → existing target-up alert fires (observable, not silent). |
 
 ---
@@ -149,7 +149,7 @@ requires that **reachability ≠ authorization** even for an internal Prometheus
 - ADR-01 — WebFlux/Netty HTTP surface (detection); MVC elsewhere
 - ADR-13 — deterministic `alert_id` as the cross-service join key
 - `ADR-19.md` — enforcement detail
-- `security.md` — PII/actuator-exposure rules (now asserted *and* authenticated)
+- internal security rules — PII/actuator-exposure rules (now asserted *and* authenticated)
 - Spring Security 7.0 reactive/servlet resource-server DSL; Nimbus JWKS decoder
 
 ## Changelog

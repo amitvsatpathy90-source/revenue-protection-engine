@@ -52,7 +52,7 @@ flush the sink, then close the pools — each step bounded, each step observable
 
 Adopt Spring `SmartLifecycle` **phase ordering** anchored to the Spring Kafka container constant,
 plus `server.shutdown: graceful`, bounded per-component deadlines, a readiness flip, and k8s
-termination alignment. Full enforcement detail in `lifecycle-shutdown.md`.
+termination alignment. Full enforcement detail in the lifecycle-shutdown rules.
 
 **1. Phase ladder.** Spring stops `SmartLifecycle` beans in **descending phase** order. Spring Kafka
 containers stop at `AbstractMessageListenerContainer.DEFAULT_PHASE = 2147483547`

@@ -48,7 +48,7 @@ contract (`RateLimiterService.tryAcquire(accountId) → boolean`, called inside 
 
 **1. Token bucket, NOT fixed-window `INCR`+`EXPIRE`** (deviating from ADR-03's casual suggestion):
 - A fixed window has the **boundary-burst exploit** — 2× the limit across a window edge — the exact
-  flaw this codebase already rejects for the velocity detector (`lua-gate.md`: "Sliding window, NOT
+  flaw this codebase already rejects for the velocity detector (the atomic Lua gate rules: "Sliding window, NOT
   fixed. Fixed window has a boundary exploit"). Using it for rate limiting would be internally
   inconsistent.
 - A token bucket is **semantically identical to the Guava limiter it replaces** (smoothed rate +
@@ -94,7 +94,7 @@ unavailable; CB-open short-circuits with no Redis round-trip (fast-fail, no per-
 safe. Idle accounts evaporate; no unbounded growth.
 
 **6. No new feature flag.** The distributed limiter is always-on; degradation is automatic via the
-CB, never a config toggle (`reactive-pipeline.md` — RPE has no feature flags beyond the dev block).
+CB, never a config toggle (the reactive pipeline rules — RPE has no feature flags beyond the dev block).
 `key-ttl-ms` / `acquire-timeout-ms` are plain tuning config.
 
 ## Alternatives Considered

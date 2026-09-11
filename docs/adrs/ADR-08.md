@@ -40,7 +40,7 @@ Welford accumulates `M2` (sum of squared deviations). For high-frequency account
 
 The stored/returned `count` stays the true uncapped value (the `>= 30` gate reads it) — unchanged. `ruleName()` and detector precedence are untouched, so `alert_id` determinism and `processed_alerts` dedup are unaffected; this changes *which* events alert, not their identity. Existing `stats:{account}` keys hold lifetime-scale `M2` and converge to the new cap-scale over ~`cap` subsequent events (or roll over within the ADR-27 30-day idle TTL), self-healing with no migration.
 
-**Rejected alternative — cap the stored `count` too:** would break the `>= 30` insufficient-history gate (ADR-14 / lua-gate.md), which reads the true post-update count. The cap is an arithmetic-window control, not a count control.
+**Rejected alternative — cap the stored `count` too:** would break the `>= 30` insufficient-history gate (ADR-14 / the atomic Lua gate rules), which reads the true post-update count. The cap is an arithmetic-window control, not a count control.
 
 **Pinned by:** `ZScoreDetectorTest.pastTheSampleCapStddevNormalisesByTheCapNotTheTrueCount` (the Java divisor) and `RedisStatsLifecycleIntegrationTest.welfordM2StopsAccumulatingPastTheSampleCap` (the Lua decay, against real Redis with a small cap). Both were negative-tested: each fails on the pre-amendment code and passes on the amended code.
 

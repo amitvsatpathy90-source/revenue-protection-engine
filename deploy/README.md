@@ -76,7 +76,7 @@ which scrapes all four services by container DNS (`rpe-detection-service:8080`, 
 `rpe-alert-service:8083`, `rpe-triage-agent:8081`). The repo-root dev compose keeps the host-oriented
 [`../monitoring/prometheus.yml`](../monitoring/prometheus.yml) (detection on host at `host.docker.internal:8080`).
 Each service exposes its own `/actuator/prometheus`; aggregation is at the scrape layer, not in-app
-(ADR-17 §6). No metric may carry `account_id` or any PII / high-cardinality tag (security.md).
+(ADR-17 §6). No metric may carry `account_id` or any PII / high-cardinality tag (per internal observability rules).
 
 ## Follow-ups
 

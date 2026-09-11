@@ -18,8 +18,8 @@ tags: [error-handling, archunit, code-quality, boundary-handler, exceptions]
 `ACCEPTED`
 
 Supersedes: nothing.
-Related: `spring-boot-4.md` (Jackson 3 `JacksonException` is a `RuntimeException`),
-`reactive-pipeline.md` (`subscribe` onError ArchUnit rule), ADR-02 (CB fallback / DLT routing),
+Related: the Spring Boot 4 migration rules (Jackson 3 `JacksonException` is a `RuntimeException`),
+the reactive pipeline rules (`subscribe` onError ArchUnit rule), ADR-02 (CB fallback / DLT routing),
 ADR-15 (triage degraded fallback), Reactive Resilience Architecture.
 
 ## Context
@@ -33,7 +33,7 @@ landing in domain logic (detection, agent reasoning) where a specific catch belo
 
 ## Decision
 
-A **two-tier, mechanically-enforced policy** (full detail in `error-boundaries.md`):
+A **two-tier, mechanically-enforced policy** (full detail in the error-boundary rules):
 
 1. **Narrow by default — the ladder:** catch the specific exception → else `RuntimeException` (the
    allowed narrower rung for unchecked-only `try` blocks: reactive `.block()`, Jackson 3, JDBC runtime
@@ -74,7 +74,7 @@ unchanged behavior (all suites green: detection 76, relay 5, alert 10, triage 28
 - **R2 — `@BoundaryHandler` over-application.** A vague reason could rubber-stamp a lazy catch.
   Mitigation: mandatory `value()`, code review, `grep -rn @BoundaryHandler` audit.
 - **R-twr — Hand-written `catch (Throwable)` is not flagged** (try-with-resources synthetic-handler
-  collision). Mitigation: none exist today; review. See `error-boundaries.md`.
+  collision). Mitigation: none exist today; review. See the error-boundary rules.
 - **R3 — Lambda attribution.** A broad catch inside a lambda is attributed to the enclosing code unit's
   annotation, which is the intended (correct) behavior; verified green.
 
@@ -86,7 +86,7 @@ catches are strictly-better standalone improvements and would stay.
 ## References
 
 - Reactive Resilience Architecture — the ladder, boundary catalog, enforcement detail
-- `spring-boot-4.md` — Jackson 3 `JacksonException` is unchecked
+- the Spring Boot 4 migration rules — Jackson 3 `JacksonException` is unchecked
 - ArchUnit `TryCatchBlock.getCaughtThrowables()` (1.3.0) — the enforcement primitive
 
 ## Changelog
