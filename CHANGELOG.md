@@ -7,6 +7,12 @@ milestone; test counts are per service (detection / relay / alert / triage) at t
 > (where a reader expects it) rather than inline in the AI-context file, where a reader — human or
 > AI — can mistake past states for current ones.
 
+## v1.17 — 2026-09-11
+
+Internal rule-filename references scrubbed from world-facing docs (CHANGELOG, `deploy/README.md`,
+all `docs/adrs/*.md`) — those filenames are gitignored development tooling, not meant for external
+readers; replaced with descriptive phrasing. No code content changed; ADR semantics preserved.
+
 ## v1.16 — 2026-07-25
 
 Audit closure remainder + v1.15 verification debt cleared:
@@ -21,7 +27,7 @@ Audit closure remainder + v1.15 verification debt cleared:
   affected (Dockerfiles COPY pom.xml/src selectively); this trims context transfer.
 - **Root `.dockerignore` patterns made recursive** (`**/target/`, `**/build/`, `**/out/`): its
   own COPY-regression guard only matched root-level dirs, not the four service `target/` trees.
-- **kafka-consumer.md §Relay Trigger de-drifted** to the v1.15 collapse (interface snippet →
+- **Kafka consumer relay trigger de-drifted** to the v1.15 collapse (interface snippet →
   concrete `PostgresNotifyRelayTrigger.awaitSignal` contract). `check-doc-drift.sh` green.
 
 ## v1.15 — 2026-07-25
@@ -144,7 +150,7 @@ ADR-17 §7 Stage 1 — relay extracted to `rpe-relay-service` (core 52/52, relay
 
 ## v1.4 — 2026-06-17
 
-ADR-17 (decompose into 4 independently deployable services; ACCEPTED); + `microservices.md` rules
+ADR-17 (decompose into 4 independently deployable services; ACCEPTED); + updated internal decomposition ruleset
 file; + Service Topology section; + `deploy/` target topology.
 
 ## v1.3 — 2026-06-14
@@ -153,7 +159,7 @@ ADR-16 implemented — core at Boot 4.1.0 + Spring Kafka 4.0, triage at Boot 4.1
 
 ## v1.2 — 2026-06-13
 
-ADR-16 (Spring Boot 4.1.x migration; ACCEPTED); + `spring-boot-4.md` rules file.
+ADR-16 (Spring Boot 4.1.x migration; ACCEPTED); + updated internal migration ruleset.
 
 ## v1.1 — 2026-06-12
 

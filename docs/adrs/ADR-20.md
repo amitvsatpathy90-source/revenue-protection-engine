@@ -91,7 +91,7 @@ and a **per-service identity**. That ownership matrix *is* the least-privilege A
 - Forged/misrouted produce attempts fail loudly (`TopicAuthorizationException`), not silently.
 
 **Negative:**
-- 4 SCRAM users + an ACL matrix to provision and keep in step with topic changes (pinned by `kafka-security.md`).
+- 4 SCRAM users + an ACL matrix to provision and keep in step with topic changes (pinned by the Kafka security rules).
 - Prod/k8s must mount a broker truststore and the per-service credentials; PLAINTEXT lab and SASL_SSL prod now diverge in config.
 - The relay's transactional producer needs the prefixed TransactionalId ACL or exactly-once init fails (covered by the matrix).
 
@@ -114,7 +114,7 @@ and a **per-service identity**. That ownership matrix *is* the least-privilege A
 - **R1 — Lab runs PLAINTEXT.** Documented, env-gated; prod/k8s sets SASL_SSL. The lab broker is single-node RF=1 anyway (existing limitation).
 - **R2 — SCRAM is a shared secret per service.** mTLS is the no-shared-secret upgrade; recommended where a mesh CA already exists.
 - **R3 — Broker-CA trust bootstrapping is out of scope.** Assumes a provisioned truststore; cert distribution is an infra concern.
-- **R4 — ACL drift.** A new topic without a matching single-writer ACL silently fails at runtime; `kafka-security.md` makes "new topic ⇒ ACL in the same PR" binding, but there is no automated reconciler yet.
+- **R4 — ACL drift.** A new topic without a matching single-writer ACL silently fails at runtime; the Kafka security rules make "new topic ⇒ ACL in the same PR" binding, but there is no automated reconciler yet.
 - **R5 — Admin principal for provisioning** has cluster ALTER; must be tightly held (separate from the per-service runtime principals).
 
 ---

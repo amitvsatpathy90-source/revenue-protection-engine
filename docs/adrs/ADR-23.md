@@ -115,7 +115,7 @@ DLTs and WRITE on the sources + parking topics. Unset ⇒ re-drive is simply not
 | In-app re-drive REST endpoint | Rejected | Breaches ADR-19 (Actuator is the only HTTP surface); adds an authenticated mutation API + attack surface for a rare human action. |
 | Always-on DLT-consumer that auto-re-drives | Rejected | Re-introduces the exact poison-loop ADR-10 rejected; unbounded retry of records broken by definition; burns budget; no human in the loop for the fix-vs-discard call. |
 | Re-drive with no attempt cap | Rejected | A genuinely-poison record ping-pongs DLT↔source forever. The cap→parking topic is the single most important safety property of any re-drive tool. |
-| Keep detection polling all DLTs | Rejected | Detection monitoring `payment.alerts.DLT`/`triage.DLT` is a cross-ownership smell; per-writer ownership (microservices.md §6) is the correct model and was needed anyway to cover the triage DLT. |
+| Keep detection polling all DLTs | Rejected | Detection monitoring `payment.alerts.DLT`/`triage.DLT` is a cross-ownership smell; per-writer ownership (microservices decomposition rules §6) is the correct model and was needed anyway to cover the triage DLT. |
 | One shared parking topic | Rejected | Conflates failure domains exactly as ADR-18 rejected for the DLTs themselves; per-DLT parking keeps ownership and retention scoped. |
 | Suffix-derive the triage DLT (`record.topic()+".DLT"`) | Rejected | That **is** the bug — it resolves to another service's sole-writer topic. Pinning to the owned constant is the fix. |
 

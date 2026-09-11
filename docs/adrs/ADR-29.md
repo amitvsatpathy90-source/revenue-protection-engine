@@ -42,7 +42,7 @@ supports a shared `resilience4j.*.configs` template that named `instances:` can 
 `base-config` — precisely the mechanism that would let one boundary's tuning silently leak into
 another's, or let a new boundary inherit a threshold tuned for an unrelated failure mode. "No global
 defaults" has been stated as a rule since `ADR-01` and is referenced by name in Architecture Spec's Stack
-section and `ai-triage-rules.md` §5, but never had its own ADR — this backfills that gap and records
+section and the AI triage ruleset §5, but never had its own ADR — this backfills that gap and records
 the verification behind it.
 
 ## Decision

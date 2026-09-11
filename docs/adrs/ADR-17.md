@@ -22,7 +22,7 @@ amit
 - ADR-11 (opaque relay payload + `@JsonIgnoreProperties` + `schema_version` — the schema-only contract mechanism)
 - ADR-13 (deterministic UUIDv5 `alert_id` — makes cross-service idempotency free)
 - ADR-15 (triage agent — the first service split; this ADR generalizes its pattern)
-- ai-triage-rules.md §1.4 (shared contract = DTO schema, not code — the precedent we standardize)
+- the AI triage ruleset §1.4 (shared contract = DTO schema, not code — the precedent we standardize)
 
 ---
 
@@ -141,7 +141,7 @@ cross-service access**:
 
 | Table / store | Owning service | Cross-service access | Contract |
 |---|---|---|---|
-| Redis (all keys) | detection | triage `redisAccountHistory` tool — **read-only** | key shapes (lua-gate.md) |
+| Redis (all keys) | detection | triage `redisAccountHistory` tool — **read-only** | key shapes (per the atomic Lua gate rules) |
 | `outbox` | detection (**sole writer of rows**) | relay — reads + transitions `status` only | row schema + `PENDING→PUBLISHED/FAILED` state machine |
 | `processed_alerts` | alert-service (**sole writer**) | triage `recentAlertsForAccount` tool — **read-only** | row schema |
 | `triaged_alerts` | triage | none | — |
@@ -175,7 +175,7 @@ transactional producer; alert-service = VT consumer + platform-pool JDBC; triage
 
 - **Applies to:** the whole workspace — every service module, the topic contracts, the table
   ownership map, the build/deploy topology.
-- **Does not change:** any detection-path correctness invariant (ADR-13/14, lua-gate.md), the
+- **Does not change:** any detection-path correctness invariant (ADR-13/14, the atomic Lua gate rules), the
   exactly-once delivery mechanism (ADR-02/05/06), or ADR-15's triage rules. This ADR is a
   **structural** decision; it moves code across deployables, it does not alter behavior.
 - **Exceptions via:** successor ADR only.
@@ -237,7 +237,7 @@ transactional producer; alert-service = VT consumer + platform-pool JDBC; triage
 - **Topology durability:** lab is RF=1; production is RF≥3 / `min.insync.replicas=2` (unchanged
   from the existing Known Limitations).
 - **Observability:** each service exposes its own `/actuator/prometheus`; no metric may carry
-  `account_id` or any PII/high-cardinality tag (security.md, unchanged). Cross-service tracing is
+  `account_id` or any PII/high-cardinality tag (internal security rules, unchanged). Cross-service tracing is
   the documented next step.
 
 ---
@@ -414,4 +414,4 @@ non-trivial.
 
 | Date | Version | Author | Change |
 |---|---|---|---|
-| 2026-06-17 | 1.0.0 | amit | Initial — ACCEPTED. Four-service decomposition along correctness-safe seams; ratifies `microservices.md`. |
+| 2026-06-17 | 1.0.0 | amit | Initial — ACCEPTED. Four-service decomposition along correctness-safe seams; ratifies the microservices decomposition rules. |
