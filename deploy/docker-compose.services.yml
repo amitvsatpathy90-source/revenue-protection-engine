@@ -13,7 +13,7 @@
 # the compose project dir, so .env in the repo root is not auto-discovered:
 #   docker compose --env-file .env -f deploy/docker-compose.services.yml up -d
 #
-# Run a single service in isolation (independent-deployability check, rules §4), e.g.:
+# Run a single service in isolation (independent-deployability check verification), e.g.:
 #   docker compose --env-file .env -f deploy/docker-compose.services.yml up -d postgres redpanda redis rpe-relay-service
 #
 # The repo-root `docker compose up -d` remains the all-in-one DEV convenience (infra +

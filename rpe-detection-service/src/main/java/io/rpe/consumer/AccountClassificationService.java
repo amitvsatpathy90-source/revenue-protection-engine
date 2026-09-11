@@ -74,7 +74,7 @@ public class AccountClassificationService {
     private boolean querySet(String key, String accountId) {
         try {
             // publishOn(laneScheduler) after the reactive Redis op — mandatory even though there is
-            // no downstream operator today (reactive-pipeline.md / System Invariants).
+            // no downstream operator today (the reactive-pipeline discipline).
             // block() then parks the lane VT without pinning a carrier. The hop is the guardrail: a
             // later .map()/.filter() added here would otherwise run on the Lettuce I/O thread — the
             // silent-deadlock path — in a method called twice per hot-path event (arch-audit).
@@ -85,7 +85,7 @@ public class AccountClassificationService {
         } catch (RuntimeException e) {
             // Redis unavailable — default to non-elevated/non-exempt.
             // .block() only throws unchecked (timeout/RedisException); RuntimeException is the
-            // narrowest catch that preserves the fail-safe default (error-boundaries.md).
+            // narrowest catch that preserves the fail-safe default (ADR-21 error boundary).
             // Caffeine TTL provides up to 60s of stale reads as resilience window.
             log.warn("Classification lookup failed for key {}, defaulting to false: {}",
                     key, e.getMessage());

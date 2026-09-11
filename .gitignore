@@ -1,4 +1,4 @@
-# --- Secrets / credentials / tokens (security.md / infra-config.md: secrets via environment only) ---
+# --- Secrets / credentials / tokens (secrets via environment variables only) ---
 .env
 *.env
 .env.*

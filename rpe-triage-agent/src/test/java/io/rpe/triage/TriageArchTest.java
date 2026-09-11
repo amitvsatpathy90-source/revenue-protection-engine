@@ -21,7 +21,7 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
 
 /**
- * ArchUnit guards for the triage service (microservices.md §7, added at ADR-17 §7 Stage 4) —
+ * ArchUnit guards for the triage service (added at ADR-17 §7 Stage 4) —
  * brings triage to parity with its siblings' silent-failure guards and adds the cross-service
  * import tripwire. Triage is an MVC + virtual-thread surface (no WebFlux), so the reactive
  * subscribe()-error-handler guard does not apply here.
@@ -46,7 +46,7 @@ class TriageArchTest {
         rule.check(classes);
     }
 
-    /** synchronized pins virtual-thread carriers — use ReentrantLock (reactive-pipeline.md). */
+    /** synchronized pins virtual-thread carriers — use ReentrantLock (virtual thread pinning constraint). */
     @Test
     void noSynchronizedMethods() {
         ArchRule rule = noMethods().should().haveModifier(JavaModifier.SYNCHRONIZED);
@@ -55,7 +55,7 @@ class TriageArchTest {
 
     /**
      * ADR-17 §7 Stage 4 — no cross-service package dependency. Triage shares only the PaymentAlert
-     * SCHEMA with the core, never code (ai-triage-rules.md §1.4 / microservices.md §2); there is no
+     * SCHEMA with the core, never code (the service-independence discipline); there is no
      * Spring AI dependency anywhere in the core, and no core dependency here. This tripwire fails if
      * anyone adds a Maven dependency on a sibling service — including detection's core (Detector set
      * / Lua gate), which must never be referenced across the service boundary.
@@ -79,7 +79,7 @@ class TriageArchTest {
      * Broad catch (Exception/Throwable) is permitted ONLY inside a @BoundaryHandler code unit
      * (or class) — a deliberate last line of defense at a thread/loop/listener/scheduler frame.
      * Elsewhere catch the specific exception, or RuntimeException (the allowed narrower rung).
-     * Bans accidental broad catches in domain logic (error-boundaries.md / ADR-21).
+     * Bans accidental broad catches in domain logic (ADR-21).
      */
     @Test
     void broadCatchOnlyInBoundaryHandlers() {
@@ -99,7 +99,7 @@ class TriageArchTest {
                         // Only java.lang.Exception — NOT Throwable: try-with-resources desugars to
                         // a synthetic catch(Throwable) for resource cleanup, which is not a real
                         // broad catch. The codebase has zero hand-written Throwable catches
-                        // (error-boundaries.md residual R-twr).
+                        // (the error-boundary discipline).
                         boolean broad = block.getCaughtThrowables().stream()
                                 .map(JavaClass::getName)
                                 .anyMatch(n -> n.equals("java.lang.Exception"));

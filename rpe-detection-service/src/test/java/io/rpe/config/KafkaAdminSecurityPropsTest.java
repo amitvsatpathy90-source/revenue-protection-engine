@@ -11,7 +11,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Pins the admin-client transport-security fold (kafka-security.md §4, ADR-20).
+ * Pins the admin-client transport-security fold (ADR-20).
  *
  * The observability pollers' {@code Admin} client is a Kafka client like any other: without the
  * securityProps fold it connects credential-less under SASL_SSL, every depth poll fails inside
@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * gauge freezes at its boot value 0 — false-healthy, silently disarming the ADR-23 RpeDlt*
  * alerts. The Testcontainers suites run PLAINTEXT, where the fold is a no-op — so this test is
  * the only CI guard on the SASL path; the runtime behaviour itself is only exercised by the
- * manual SASL smoke run (kafka-security.md test bar).
+ * manual SASL smoke run (the Kafka transport-security discipline).
  */
 class KafkaAdminSecurityPropsTest {
 

@@ -15,7 +15,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  *
  * Sole writer of {@code processed_alerts} (ADR-17 §3.4); the triage service reads it
  * read-only. Runtime: virtual-thread consumer; JDBC on a dedicated platform-thread pool.
- * No Redis, no WebFlux. Independent deployability (microservices.md §4): boots and consumes
+ * No Redis, no WebFlux. Independent deployability (the service-independence discipline): boots and consumes
  * whatever is on {@code payment.alerts} with every other service absent.
  */
 @SpringBootApplication

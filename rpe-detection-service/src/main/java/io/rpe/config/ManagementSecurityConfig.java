@@ -30,7 +30,7 @@ import java.time.Duration;
  * reachability is not authorization: every Actuator call carries a validated JWT, except the
  * two k8s probes which are public but detail-free.
  *
- * <p>Per-service class by design — there is no shared rpe-common jar (microservices.md §1.4);
+ * <p>Per-service class by design — there is no shared rpe-common jar (the service-independence discipline);
  * this is symmetric with the duplicated {@code Pii} helper. Servlet services (relay, alert,
  * triage) carry the {@code HttpSecurity} analog of this same policy.
  *
@@ -39,7 +39,7 @@ import java.time.Duration;
  * exist. Gating on a reactive web application keeps these beans (and the fail-closed decoder)
  * out of non-web contexts so the test suite still loads.
  *
- * <p>NOTE (spring-boot-4.md): the reactive lambda DSL below is stable since Security 5.x
+ * <p>NOTE: the reactive lambda DSL below is stable since Security 5.x
  * reactive and retained in Security 7.0. The {@code *Spec::disable} method-refs and
  * {@code oauth2ResourceServer} shape should be confirmed against the 7.0 changelog before
  * promoting — 7.0 removed several deprecated NON-lambda overloads (none used here).

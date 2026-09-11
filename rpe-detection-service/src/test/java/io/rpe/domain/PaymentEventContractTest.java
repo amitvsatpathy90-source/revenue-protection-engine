@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  * (consumed by rpe-detection-service).
  *
  * The contract between this service and its producer is a SCHEMA, not shared code
- * (microservices.md §2): {@code @JsonIgnoreProperties(ignoreUnknown = true)} on
+ * (the service-independence discipline): {@code @JsonIgnoreProperties(ignoreUnknown = true)} on
  * {@link PaymentEvent} is what makes schema evolution additive-safe (ADR-11). This test
  * pins that tolerance so a future deploy can add fields to {@code payment.events} without
  * crashing this consumer on buffered/older events.

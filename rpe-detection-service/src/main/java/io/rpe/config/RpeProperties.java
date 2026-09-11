@@ -49,7 +49,7 @@ public record RpeProperties(
     public record WelfordProperties(int sampleCap) {}
 
     /** Per-event dedup key TTL. Externalised like the welford cap (ADR-08 precedent); the
-     *  dedup-last + NX invariant (lua-gate.md) is unchanged — only the window is configurable. */
+     *  dedup-last + NX invariant (the atomic detection-gate discipline) is unchanged — only the window is configurable. */
     public record DedupProperties(int ttlSeconds) {}
 
     /** Sliding idle TTL on {@code stats:{account}} Welford keys (ADR-27 — supersedes ADR-10's

@@ -5,7 +5,7 @@
 # a DLT is allowed to be briefly non-empty (transient poison), but a SUSTAINED or GROWING backlog
 # means events are being rejected faster than an operator is draining them, and a non-empty
 # *.parked topic means the re-drive tool gave up — a human must decide (decision tree in
-# docs/adrs/dlt-operations.md).
+# the DLT-parity discipline).
 #
 # `.parked` is matched with the [.] character class (literal dot) to avoid backslash escaping in YAML.
 # Lab note: these are synthetic-data thresholds; calibrate `for:` windows to real traffic in prod.

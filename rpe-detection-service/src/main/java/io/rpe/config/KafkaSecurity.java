@@ -12,7 +12,7 @@ import java.util.Map;
  * Kafka client transport-security properties (SASL_SSL + SCRAM) assembled from env ONLY.
  * The password is folded into the JAAS string in memory — never in application.yml, never
  * logged, never surfaced via /actuator/configprops (locked by ADR-19). Per-service copy
- * (no shared rpe-common jar, microservices.md §1.4), symmetric with Pii.
+ * (no shared rpe-common jar), symmetric with Pii.
  *
  * <p>Fail-closed: a SASL protocol with missing credentials aborts startup rather than silently
  * connecting unauthenticated (ADR-20 — same discipline as DB_PASSWORD / ADR-19).

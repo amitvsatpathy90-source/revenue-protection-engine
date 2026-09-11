@@ -16,7 +16,7 @@ import java.util.function.Supplier;
  * INSERT and the relay's SELECT as unrelated ops).
  *
  * This is the relay-side counterpart of detection's {@code TraceContextWriter} — a per-service
- * copy (microservices.md §1.4: no shared jar), symmetric with {@code Pii}/{@code KafkaSecurity}/
+ * copy (the service-independence discipline), symmetric with {@code Pii}/{@code KafkaSecurity}/
  * {@code BoundaryHandler}.
  *
  * Fail-open: a NULL/blank traceparent (legacy row, or a producer that ran without tracing) runs

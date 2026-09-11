@@ -6,7 +6,7 @@ import java.time.Duration;
 
 /**
  * Binding config for the triage module. The {@code llm} block is the Resilience4j
- * boundary spec from ai-triage-rules.md §5 — values are BINDING, no global defaults.
+ * boundary spec for LLM resilience — values are BINDING, no global defaults.
  */
 @ConfigurationProperties(prefix = "triage")
 public record TriageProperties(

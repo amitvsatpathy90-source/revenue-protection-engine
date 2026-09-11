@@ -40,8 +40,8 @@ bounded by the correctness contexts that already exist in the code —
 | `rpe-triage-agent` (ADR-15) | Advisory LLM enrichment | **owns** `triaged_alerts` | consumes `payment.alerts`; → `payment.alerts.triaged` |
 
 Services communicate **only** over Kafka (async). Contracts are shared as **versioned message
-schemas, never as a shared code jar** (ADR-11 / ai-triage-rules §1.4, generalized). Each service
-boots, tests, and ships with every other service absent.
+schemas, never as a shared code jar** (ADR-11 / service-independence discipline, generalized). Each
+service boots, tests, and ships with every other service absent.
 
 **This ADR draws the boundaries and ratifies the rules; the physical extraction is a sequenced
 strangler-fig migration (§7) — relay first, then alert, then detection-is-what-remains — because
@@ -237,7 +237,7 @@ transactional producer; alert-service = VT consumer + platform-pool JDBC; triage
 - **Topology durability:** lab is RF=1; production is RF≥3 / `min.insync.replicas=2` (unchanged
   from the existing Known Limitations).
 - **Observability:** each service exposes its own `/actuator/prometheus`; no metric may carry
-  `account_id` or any PII/high-cardinality tag (internal security rules, unchanged). Cross-service tracing is
+  `account_id` or any PII/high-cardinality tag (the security discipline, unchanged). Cross-service tracing is
   the documented next step.
 
 ---

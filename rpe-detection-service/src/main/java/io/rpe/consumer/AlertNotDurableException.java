@@ -17,7 +17,7 @@ package io.rpe.consumer;
  *
  * The exception message deliberately carries the rule name only — {@code reason} may
  * contain amount/speed detail and rides in the header + alert payload, never in a
- * message that reaches exception fingerprints (security.md).
+ * message that reaches exception fingerprints (the security discipline).
  */
 public class AlertNotDurableException extends RuntimeException {
 

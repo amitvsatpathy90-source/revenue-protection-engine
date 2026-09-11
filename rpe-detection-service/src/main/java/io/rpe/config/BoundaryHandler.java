@@ -15,7 +15,7 @@ import java.lang.annotation.Target;
  * annotation. The ladder is: catch the specific exception → else {@code RuntimeException}
  * (allowed, narrower — Jackson 3 / reactive {@code .block()} surfaces) → else
  * {@code Exception/Throwable} which requires this annotation. Per-service copy (no shared
- * rpe-common jar, microservices.md §1.4), symmetric with {@code Pii} / {@code KafkaSecurity}.
+ * rpe-common jar, the service-independence discipline), symmetric with {@code Pii} / {@code KafkaSecurity}.
  */
 @Retention(RetentionPolicy.RUNTIME)
 @Target({ElementType.METHOD, ElementType.CONSTRUCTOR, ElementType.TYPE})

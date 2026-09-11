@@ -14,7 +14,7 @@ metadata:
   namespace: rpe
 spec:
   instances: 2
-  # Pinned to match the artifact's compose Postgres (16.3) — no :latest (infra-config.md).
+  # Pinned to match the artifact's compose Postgres (16.3) — no :latest.
   imageName: ghcr.io/cloudnative-pg/postgresql:16.3
 
   # Superuser secret (rpe-pg-superuser) is needed by the one-time bootstrap Job to

@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Evidence grounding (ai-triage-rules.md §3): every {@code evidence[]} item must
+ * Evidence grounding (the triage agent design discipline): every {@code evidence[]} item must
  * reference a tool-call ID from THIS run. Unmatched items are dropped — an LLM
  * (or an injected instruction) cannot fabricate evidence that survives validation.
  *

@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * {@code rpe.dlt.depth{topic=...}} for the DLTs {@code rpe-alert-service} solely writes (ADR-23).
  *
- * Per-service copy of the detection-service poller (no shared jar — microservices.md §1.4),
+ * Per-service copy of the detection-service poller (no shared jar),
  * symmetric with {@code Pii} / {@code KafkaSecurity} / {@code BoundaryHandler}. Alert-service owns
  * {@code payment.alerts.DLT}; the {@code .parked} topic holds alerts that re-poisoned past the
  * re-drive attempt cap (ADR-23) — a non-empty parked topic is a page-worthy "manual decision

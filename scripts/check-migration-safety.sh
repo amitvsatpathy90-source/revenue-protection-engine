@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # See operational documentation
-# schema-rules.md chaosforge, arch-audit F-09): a Flyway migration added in this PR must be
+# Flyway migration safety rule (arch-audit F-09): a Flyway migration added in this PR must be
 # safe to run while the PREVIOUS app version is still serving traffic (migrations run
 # in-process at app boot on a rolling deploy — see the rule file for the full rationale).
 # This script is the enforcement half; the rules file alone is advisory text an automated AI

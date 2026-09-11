@@ -5,7 +5,7 @@
 -- the relay runs with spring.flyway.enabled=false. This file provisions the slice of that
 -- published contract the relay reads, so the relay's own integration test has a schema to
 -- run against in its ephemeral Postgres. It mirrors the core V1/V2/V3/V4 migrations; if the
--- core outbox contract changes, this fixture must track it (microservices.md §2 — additive).
+-- core outbox contract changes, this fixture must track it (the service-independence discipline).
 
 CREATE TABLE outbox (
     id          UUID        PRIMARY KEY,

@@ -67,7 +67,7 @@ public class KafkaConfig {
      *
      * <p>Built from Boot's autoconfigured admin properties PLUS the same transport-security props
      * as every factory in this class — the admin client is a Kafka client like any other
-     * (kafka-security.md §4: "a missed factory connects unauthenticated"). Without this fold a
+     * (ADR-20: connects unauthenticated if omitted). Without this fold a
      * SASL_SSL stack leaves the admin client credential-less: every depth poll fails, the
      * {@code @BoundaryHandler} poller absorbs the failures, and every {@code rpe.dlt.depth} gauge
      * freezes at its boot value 0 — false-healthy, silently disarming the ADR-23 RpeDlt* alerts.
@@ -181,7 +181,7 @@ public class KafkaConfig {
      * template would base64-wrap those bytes (Spring Kafka ref, annotation-error-handling), corrupting
      * the DLT record for forensics. The type-map routes {@code byte[]} through a {@code ByteArraySerializer}
      * template; typed values that failed validation/gate (successfully deserialized) keep the JSON
-     * template. See security.md (Deserialization + DLT).
+     * template. (the security discipline (deserialization + DLT)).
      */
     @Bean
     public DeadLetterPublishingRecoverer dltRecoverer(

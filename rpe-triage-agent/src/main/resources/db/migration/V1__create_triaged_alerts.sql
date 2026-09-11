@@ -1,6 +1,6 @@
 -- Triage inbox + verdict store (ADR-15).
 -- alert_id PK = the inbox dedup key. INSERT ... ON CONFLICT DO NOTHING runs BEFORE
--- the LLM call (ordering invariant, ai-triage-rules.md §2) — the deterministic
+-- the LLM call (inbox pattern ordering invariant) — the deterministic
 -- UUIDv5 alert_id (ADR-13) makes replay idempotency a one-line conflict clause.
 --
 -- triage_status lifecycle:

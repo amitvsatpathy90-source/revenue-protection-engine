@@ -69,8 +69,7 @@ Both calls execute after the inbox dedup insert and before the LLM call, and are
 ### References
 - `docs/adrs/ADR-15.md` — parent decision this ADR extends
 - `docs/adrs/ADR-29.md` — no-global-R4j-defaults rule
-- `CLAUDE.md` Immutable Constraints — JDBC-dedicated-pool rule; shutdown-order/timeout-trio discipline (same reasoning pattern applied here)
-- the AI triage ruleset §2, §4 (needs addendum for third injection path), §5, §7 (testing bar additions) — **section-number citations here are provisional pending a rules-file restructure; the current file has no numbered subsections (see Residuals)**
+- Immutable Constraints — JDBC-dedicated-pool rule; shutdown-order/timeout-trio discipline (same reasoning pattern applied here)
 - `deploy/k8s/netpol/41-allow-paths.yaml` — existing egress coverage, no netpol change required
 - Spring AI `VectorStore` interface (verified 2026-09-05): `similaritySearch(SearchRequest)` / `similaritySearch(String)` only, no vector-input overload — grounds the "why not `VectorStore` directly" call in Decision, above.
 

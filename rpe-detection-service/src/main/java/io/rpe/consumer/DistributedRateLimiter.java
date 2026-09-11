@@ -78,7 +78,7 @@ public class DistributedRateLimiter {
 
         Mono<Decision> call = redis.execute(rateLimitScript, keys, args)
                 .next()
-                // MANDATORY: hop off the Lettuce I/O thread before mapping (reactive-pipeline.md).
+                // MANDATORY: hop off the Lettuce I/O thread before mapping (the reactive-pipeline discipline).
                 .publishOn(laneScheduler)
                 .map(raw -> toDecision((List<Object>) raw))
                 .transformDeferred(CircuitBreakerOperator.of(circuitBreaker))

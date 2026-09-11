@@ -9,7 +9,7 @@ import java.util.UUID;
  * Inbound alert from {@code payment.alerts}.
  *
  * This is the ONLY contract shared with the core pipeline, and it is shared as a
- * schema, not as code (ai-triage-rules.md §1.4): {@code @JsonIgnoreProperties} +
+ * schema, not as code (the service-independence discipline): {@code @JsonIgnoreProperties} +
  * {@code schemaVersion} give ADR-11 additive-evolution semantics. The core module's
  * {@code AlertMessage} may gain fields without touching this module.
  *

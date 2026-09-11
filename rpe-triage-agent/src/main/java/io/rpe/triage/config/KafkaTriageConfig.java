@@ -49,7 +49,7 @@ public class KafkaTriageConfig {
      * (ADR-18). It is NOT {@code payment.alerts.DLT} — that topic is owned by
      * {@code rpe-alert-service}. Spring Kafka's default {@code <source>.DLT} suffix resolves to the
      * wrong owner; the destination MUST be pinned to this constant. The matching ACL grants
-     * {@code rpe-triage} WRITE on this topic only (kafka-security.md), so in a SASL stack a
+     * {@code rpe-triage} WRITE on this topic only (ADR-20 ACL matrix), so in a SASL stack a
      * misroute is broker-rejected — but in lab PLAINTEXT it would silently land on the wrong
      * topic, which is exactly what {@link #triageDltDestination} + its unit test guard against.
      */
@@ -92,7 +92,7 @@ public class KafkaTriageConfig {
      * {@code TriageLagMetrics}). {@code Admin} is documented thread-safe and meant to be reused
      * across concurrent callers. Moved here from {@code TriageAdminClientConfig} so it is built
      * from Boot's autoconfigured admin properties PLUS the same transport-security props as the
-     * factories above — the admin client is a Kafka client like any other (kafka-security.md §4).
+     * factories above — the admin client is a Kafka client like any other (ADR-20).
      * Without this fold a SASL_SSL stack leaves it credential-less: every depth/lag poll fails,
      * the {@code @BoundaryHandler} pollers absorb the failures, and the {@code rpe.dlt.depth} /
      * lag gauges freeze at their boot values — false-healthy, silently disarming the ADR-23

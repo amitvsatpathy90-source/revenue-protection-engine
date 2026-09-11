@@ -12,7 +12,7 @@
 # and as a ready toggle for non-Java sidecars; re-adding the annotation is a deliberate, separate
 # decision. Do NOT re-enable alongside the app-level stack.
 #
-# PII / cardinality rules (security.md + ADR-15 §6) — still apply to the app-level spans:
+# PII / cardinality rules (the security discipline + ADR-15 §6) — still apply to the app-level spans:
 #   - NEVER export account_id or any PII as span attribute or metric tag
 #   - Tag by rule_type / outcome only (collector's attributes/pii-suppress does belt-and-suspenders)
 #   - db.statement capture disabled (SQL may include account_id in WHERE clauses)
@@ -40,7 +40,7 @@ spec:
         value: "true"
       - name: OTEL_INSTRUMENTATION_JDBC_STATEMENT_MAX_LENGTH
         value: "0"
-      # Never put account_id in span tags (security.md)
+      # Never put account_id in span tags (the security discipline)
       - name: OTEL_INSTRUMENTATION_MESSAGING_EXPERIMENTAL_CAPTURE_HEADERS
         value: "false"
       # Resource attributes: service name comes from OTEL_SERVICE_NAME (set per-pod via downward API)

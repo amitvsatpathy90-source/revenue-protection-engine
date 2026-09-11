@@ -73,7 +73,7 @@ class RpeArchTest {
     /**
      * No synchronized methods anywhere in RPE — synchronized pins virtual-thread carriers
      * and silently degrades ALL VT concurrency across the JVM. Code that must lock uses
-     * ReentrantLock (reactive-pipeline.md Virtual Thread Rules).
+     * ReentrantLock (virtual thread carrier pinning prevention).
      */
     @Test
     void noSynchronizedMethods() {
@@ -107,7 +107,7 @@ class RpeArchTest {
 
     /**
      * ADR-17 §7 Stage 4 — no cross-service package dependency. Services communicate only over
-     * Kafka (async) and share contracts as schemas, never as code (microservices.md §1.4/§2).
+     * Kafka (async) and share contracts as schemas, never as code (the service-independence discipline).
      * A compile-time dependency on a sibling service's package = a shared-code recoupling =
      * distributed monolith. This is a tripwire: it activates the instant someone adds a Maven
      * dependency on another service and imports its classes.
@@ -145,7 +145,7 @@ class RpeArchTest {
      * Broad catch (Exception/Throwable) is permitted ONLY inside a @BoundaryHandler code unit
      * (or class) — a deliberate last line of defense at a thread/loop/listener/scheduler frame.
      * Elsewhere catch the specific exception, or RuntimeException (the allowed narrower rung).
-     * Bans accidental broad catches in domain logic (error-boundaries.md / ADR-21).
+     * Bans accidental broad catches in domain logic (the error-boundary discipline).
      */
     @Test
     void broadCatchOnlyInBoundaryHandlers() {
@@ -165,7 +165,7 @@ class RpeArchTest {
                         // Only java.lang.Exception — NOT Throwable: try-with-resources desugars to
                         // a synthetic catch(Throwable) for resource cleanup, which is not a real
                         // broad catch. The codebase has zero hand-written Throwable catches
-                        // (error-boundaries.md residual R-twr).
+                        // (the error-boundary discipline).
                         boolean broad = block.getCaughtThrowables().stream()
                                 .map(JavaClass::getName)
                                 .anyMatch(n -> n.equals("java.lang.Exception"));

@@ -6,7 +6,7 @@ import java.util.UUID;
 /**
  * Inbox-pattern idempotency store over {@code triaged_alerts} (ADR-15 §3.5).
  *
- * The ordering invariant this interface exists to enforce (ai-triage-rules.md §2):
+ * The ordering invariant this interface exists to enforce (the triage agent design discipline):
  * {@link #tryInsert} runs BEFORE the LLM call; a conflict means the alert was already
  * triaged (or is being triaged) — skip, commit offset, spend nothing.
  *

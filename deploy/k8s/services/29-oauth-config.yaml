@@ -1,7 +1,7 @@
 # Zero-trust Actuator auth (ADR-19) — shared, non-secret OAuth2 Resource Server config.
 # Issuer/JWKS URI/audience are not credentials, so a ConfigMap (not a Secret) is correct here.
 #
-# Fail-closed by design (ADR-19 §4 / actuator-security.md rule 5): rpe.security.oauth2.issuer
+# Fail-closed by design (ADR-19 §4 / the Actuator zero-trust discipline): rpe.security.oauth2.issuer
 # and jwk-set-uri have NO default in any service's application.yml (${RPE_OAUTH_ISSUER} with no
 # `:default`) — a service boots only once these are non-blank and point at a reachable IdP/JWKS.
 #

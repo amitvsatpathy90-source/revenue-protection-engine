@@ -120,7 +120,7 @@ is reconstructed straight to the outbox:
   returned "saturated". The `DeadLetterPublishingRecoverer.headersFunction` stamps
   `x-rpe-outcome=ALERT_UNDURABLE`, `x-rpe-rule=<ruleName>`, `x-rpe-reason=<reason>` on the DLT record,
   making it **self-sufficient**. (`reason` rides the header, never the exception *message* — the
-  message carries the rule name only, per internal security rules fingerprint-PII discipline.)
+  message carries the rule name only, per the security discipline.)
 - On consume, `PaymentEventConsumer.handleRedrivenDuplicate` detects a re-driven record (the
   `x-redrive-attempts` header the script stamps, ADR-23) that is dedup-blocked. If it carries
   `ALERT_UNDURABLE` + a rule, the alert is reconstructed **deterministically** —
@@ -219,7 +219,7 @@ Immutable Constraints in review.
 - ADR-02 (CB fallback), ADR-07 (lane executor), ADR-12 (async-enqueue window), ADR-13 (UUIDv5
   `alert_id`), ADR-14 (gate dedup-last), ADR-18/ADR-23 (DLT ownership + re-drive), ADR-22 (shutdown
   drain safety-net)
-  
+
 ## Changelog
 
 | Version | Date | Author | Description |
