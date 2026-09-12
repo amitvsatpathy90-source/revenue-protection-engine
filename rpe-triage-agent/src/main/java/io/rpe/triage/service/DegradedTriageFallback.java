@@ -17,6 +17,11 @@ import java.util.UUID;
  * HARD CONSTRAINT (the triage agent design discipline): this class has ZERO Spring AI imports.
  * It must compile and run with the Spring AI dependency deleted from the pom.
  * Do not add Spring AI types here — route LLM-shaped logic to TriageAgent instead.
+ *
+ * ADR-30: ragContextUsed is threaded through so a degraded verdict correctly
+ * reports whether RAG context was fetched before the LLM call failed. Every
+ * pre-existing overload defaults this to false — those callers never attempted
+ * a RAG fetch, so false is factually correct, not a placeholder.
  */
 @Component
 public class DegradedTriageFallback {
@@ -29,19 +34,27 @@ public class DegradedTriageFallback {
 
     private static final Severity DEFAULT_SEVERITY = Severity.MEDIUM;
 
+    /** Pre-ADR-30 call shape — UNCHANGED signature. */
     public TriagedAlertMessage degraded(PaymentAlert alert, String degradedReason, String promptVersion) {
-        return build(alert.alertId(), alert.eventId(), alert.accountId(), alert.ruleName(),
-                degradedReason, promptVersion);
+        return degraded(alert, degradedReason, promptVersion, false);
     }
 
-    /** Sweep path — only inbox columns are available for stale PENDING_TRIAGE rows. */
+    /** ADR-30: RAG-aware degraded path — caller reports whether context was actually retrieved. */
+    public TriagedAlertMessage degraded(PaymentAlert alert, String degradedReason, String promptVersion,
+                                         boolean ragContextUsed) {
+        return build(alert.alertId(), alert.eventId(), alert.accountId(), alert.ruleName(),
+                degradedReason, promptVersion, ragContextUsed);
+    }
+
+    /** Sweep path — only inbox columns are available for stale PENDING_TRIAGE rows; never RAG-aware. */
     public TriagedAlertMessage degraded(UUID alertId, String accountId, String ruleName,
                                         String degradedReason, String promptVersion) {
-        return build(alertId, null, accountId, ruleName, degradedReason, promptVersion);
+        return build(alertId, null, accountId, ruleName, degradedReason, promptVersion, false);
     }
 
     private TriagedAlertMessage build(UUID alertId, String eventId, String accountId,
-                                      String ruleName, String degradedReason, String promptVersion) {
+                                      String ruleName, String degradedReason, String promptVersion,
+                                      boolean ragContextUsed) {
         Severity severity = SEVERITY_BY_RULE.getOrDefault(ruleName, DEFAULT_SEVERITY);
         return new TriagedAlertMessage(
                 alertId,
@@ -58,6 +71,7 @@ public class DegradedTriageFallback {
                 0,
                 degradedReason,
                 Instant.now(),
-                TriagedAlertMessage.SCHEMA_VERSION);
+                TriagedAlertMessage.SCHEMA_VERSION,
+                ragContextUsed);           // ADR-30 trailing field
     }
 }

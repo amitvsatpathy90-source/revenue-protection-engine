@@ -40,4 +40,17 @@ public class ExecutorConfig {
         return Executors.newThreadPerTaskExecutor(
                 Thread.ofVirtual().name("triage-llm-", 0).factory());
     }
+
+    /**
+     * VT-per-task executor for RagEmbeddingClient's TimeLimiter futures — HTTP-bound
+     * call, same blocking-VT shape as llmExecutor. Separate bean for incident
+     * attribution: a stuck submit() during an incident should point at one boundary.
+     * RagRetrievalClient deliberately does NOT use this — pgvector query is raw JDBC,
+     * uses jdbcExecutor instead (no VT exemption for JDBC, ai-triage-rules.md §2).
+     */
+    @Bean(destroyMethod = "shutdown")
+    public ExecutorService ragExecutor() {
+        return Executors.newThreadPerTaskExecutor(
+                Thread.ofVirtual().name("triage-rag-embed-", 0).factory());
+    }
 }

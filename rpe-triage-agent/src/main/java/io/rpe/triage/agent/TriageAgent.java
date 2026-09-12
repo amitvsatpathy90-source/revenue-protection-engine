@@ -4,6 +4,7 @@ import io.rpe.triage.config.TriageProperties;
 import io.rpe.triage.domain.PaymentAlert;
 import io.rpe.triage.domain.TriageVerdict;
 import io.rpe.triage.domain.TriagedAlertMessage;
+import io.rpe.triage.rag.TriageVectorRepository.RetrievedChunk;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.DistributionSummary;
@@ -29,6 +30,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * The agent loop (ADR-15 §3.3): tool SELECTION is the model's; tool EXISTENCE and the
@@ -38,7 +40,7 @@ import java.util.Set;
  * loop below is the only place tools run — {@code for (round = 0; round < MAX_TOOL_ROUNDS)}.
  * Prompt-stated limits are suggestions to an LLM; loop bounds are not.
  *
- * <b>Injection containment</b> (rules §4): the system prompt is a static compiled
+ * <b>Injection containment</b>: the system prompt is a static compiled
  * constant; event fields enter ONLY inside the fenced {@code <alert_data>} block as
  * data. The real defenses are the structured-output schema and the evidence-ID
  * validator — instructions alone are not a mitigation.
@@ -75,7 +77,7 @@ public class TriageAgent {
             - Respond ONLY with the JSON object described below — no prose around it.
             """;
 
-    /** Tool exposure per rule type — don't hand every tool to every call (rules §3). */
+    /** Tool exposure per rule type — don't hand every tool to every call. */
     private static final Map<String, List<String>> TOOLS_BY_RULE = Map.of(
             "geo",      List.of(TriageTools.TOOL_ACCOUNT_HISTORY),
             "velocity", List.of(TriageTools.TOOL_ACCOUNT_HISTORY, TriageTools.TOOL_RECENT_ALERTS),
@@ -117,6 +119,11 @@ public class TriageAgent {
                 .register(meterRegistry);
     }
 
+    /** Delegates with no RAG context — existing callers/tests get identical prior behavior. */
+    public TriagedAlertMessage triage(PaymentAlert alert) {
+        return triage(alert, List.of());
+    }
+
     /**
      * Runs the bounded agent loop and returns an LLM_TRIAGED envelope.
      *
@@ -125,20 +132,20 @@ public class TriageAgent {
      *         verdict. Parse/schema failures are NEVER retried: same input, same
      *         garbage, doubled cost.
      */
-    public TriagedAlertMessage triage(PaymentAlert alert) {
+    public TriagedAlertMessage triage(PaymentAlert alert, List<RetrievedChunk> ragContext) {
         ToolCallingChatOptions options = ToolCallingChatOptions.builder()
                 .toolCallbacks(toolsFor(alert.ruleName()))
                 // Round budget is OURS. Spring AI 2.0 ChatModel.call() never auto-executes
                 // tools — tool calls are returned to the caller; we run executeToolCalls()
                 // manually in the loop below. internalToolExecutionEnabled was removed in 2.0.
-                // Triage wants consistency, not creativity (rules §3)
+                // Triage wants consistency, not creativity
                 .temperature(0.2)
                 // The model cannot influence ToolContext — tools verify the requested
                 // account against this value (injection containment)
                 .toolContext(Map.of(TriageTools.CTX_ACCOUNT_ID, alert.accountId()))
                 .build();
 
-        Prompt prompt = new Prompt(buildMessages(alert), options);
+        Prompt prompt = new Prompt(buildMessages(alert, ragContext), options);
         logPromptForDevIfEnabled(prompt);
 
         Set<String> executedToolCallIds = new HashSet<>();
@@ -183,23 +190,39 @@ public class TriageAgent {
                 rounds,
                 null,
                 Instant.now(),
-                TriagedAlertMessage.SCHEMA_VERSION);
+                TriagedAlertMessage.SCHEMA_VERSION,
+                !ragContext.isEmpty());
+    }
+
+    /** Delegates with no RAG context — existing callers/tests get identical prior output. */
+    List<Message> buildMessages(PaymentAlert alert) {
+        return buildMessages(alert, List.of());
     }
 
     /**
      * System prompt: static constant + the converter's format contract.
-     * User message: alert fields as fenced DATA — never instructions.
+     * User message: alert fields as fenced DATA, plus an optional fenced RAG
+     * context block — never instructions, same containment discipline as alert_data.
      */
-    List<Message> buildMessages(PaymentAlert alert) {
+    List<Message> buildMessages(PaymentAlert alert, List<RetrievedChunk> ragContext) {
         String alertJson;
         try {
             alertJson = objectMapper.writeValueAsString(alert);
         } catch (JsonProcessingException e) {   // Jackson 2 checked serialization failure
             throw new TriageAgentException("alert-serialization", e);
         }
+        String ragBlock = ragContext.isEmpty()
+                ? ""
+                : "\n<rag_context>\n" + formatRagContext(ragContext) + "\n</rag_context>";
         return List.of(
                 new SystemMessage(SYSTEM_PROMPT + "\n" + outputConverter.getFormat()),
-                new UserMessage("<alert_data>\n" + alertJson + "\n</alert_data>"));
+                new UserMessage("<alert_data>\n" + alertJson + "\n</alert_data>" + ragBlock));
+    }
+
+    private String formatRagContext(List<RetrievedChunk> chunks) {
+        return chunks.stream()
+                .map(c -> "- " + c.ruleName() + ": " + c.content())
+                .collect(Collectors.joining("\n"));
     }
 
     private TriageVerdict parseVerdict(ChatResponse response) {
@@ -208,7 +231,7 @@ public class TriageAgent {
             return outputConverter.convert(content).validated();
         } catch (RuntimeException e) {   // converter + record validation throw only unchecked
             meterRegistry.counter("triage.schema.failure").increment();
-            // Exception class only — completion bodies never reach logs (rules §6)
+            // Exception class only — completion bodies never reach logs
             throw new TriageAgentException("schema-validation", e);
         }
     }
@@ -221,7 +244,7 @@ public class TriageAgent {
     }
 
     private void logPromptForDevIfEnabled(Prompt prompt) {
-        // Dev-profile-only flag, off by default and never in compose defaults (rules §6)
+        // Dev-profile-only flag, off by default and never in compose defaults
         if (props.dev() != null && props.dev().logPrompts()) {
             devPromptLog.debug("PROMPT v{}:\n{}", props.promptVersion(), prompt.getContents());
         }

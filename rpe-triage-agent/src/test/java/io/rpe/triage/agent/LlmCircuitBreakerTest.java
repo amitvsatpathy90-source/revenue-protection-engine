@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * §7 circuit-breaker test (ADR-15 §6.1 — provider degradation as LATENCY, not errors).
- *
+ * <p>
  * A slow provider drives the slow-call-rate CB open, after which calls fail fast
  * (no consumer-lag stall) and the service emits DEGRADED_RULE_BASED verdicts. This is
  * the demoable property: "kill the LLM, watch the CB open, watch degraded verdicts
@@ -34,7 +34,9 @@ class LlmCircuitBreakerTest {
     private final TriageProperties props = TriageTestSupport.cbProps();
 
     @AfterEach
-    void tearDown() { vt.close(); }
+    void tearDown() {
+        vt.close();
+    }
 
     @Test
     void slowProviderOpensBreakerThenCallsFailFast() {
@@ -45,7 +47,10 @@ class LlmCircuitBreakerTest {
 
         // Window is 2 calls: two slow calls take the slow-rate to 100% ≥ 50% → OPEN.
         for (int i = 0; i < 2; i++) {
-            try { client.call(new Prompt("probe")); } catch (RuntimeException ignored) { }
+            try {
+                client.call(new Prompt("probe"));
+            } catch (RuntimeException ignored) {
+            }
         }
 
         assertThat(resilience.circuitBreaker().getState())
@@ -70,7 +75,10 @@ class LlmCircuitBreakerTest {
 
         // Force the breaker open via the same slow-call mechanism.
         for (int i = 0; i < 2; i++) {
-            try { client.call(new Prompt("probe")); } catch (RuntimeException ignored) { }
+            try {
+                client.call(new Prompt("probe"));
+            } catch (RuntimeException ignored) {
+            }
         }
         assertThat(resilience.circuitBreaker().getState()).isEqualTo(CircuitBreaker.State.OPEN);
 
@@ -83,7 +91,7 @@ class LlmCircuitBreakerTest {
         var publisher = new TriageTestSupport.CapturingPublisher();
         var service = new TriageService(
                 inbox, agent, new DegradedTriageFallback(), publisher,
-                TriageTestSupport.objectMapper(), registry, props);
+                TriageTestSupport.objectMapper(), registry, props, null, null, resilience);
 
         service.process(TriageTestSupport.alert("geo"));
 
