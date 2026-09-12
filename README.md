@@ -142,11 +142,6 @@ Canonical container topology: `docker compose --env-file .env -f deploy/docker-c
 # 1. Copy env template and FILL IN values — secrets have no checked-in defaults.
 #    docker compose and the app both fail fast if POSTGRES_PASSWORD / DB_PASSWORD /
 #    GRAFANA_PASSWORD / SPRING_AI_OPENAI_API_KEY are unset (security rule: secrets via environment only).
-> **ADR-30 (RAG-augmented triage) is PROPOSED, not ACCEPTED.** `V2__create_triage_rag_corpus.sql`
-> (schema) is applied; `V3__seed_triage_rag_corpus.sql` (corpus embeddings) is pending real
-> OpenAI-generated vectors via `deploy/scripts/generate-rag-corpus-embeddings.sh` — see that
-> script's header for the manual operator flow. Until `V3` is committed, `rpe-triage-agent`
-> runs without RAG grounding (narrative-only degradation, not a failure — ADR-30).
 cp .env.example .env
 
 # 2. Generate RSA keypairs and static JWKS for local Actuator auth (ADR-19)
