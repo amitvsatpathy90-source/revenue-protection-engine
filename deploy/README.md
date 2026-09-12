@@ -78,6 +78,14 @@ which scrapes all four services by container DNS (`rpe-detection-service:8080`, 
 Each service exposes its own `/actuator/prometheus`; aggregation is at the scrape layer, not in-app
 (ADR-17 §6). No metric may carry `account_id` or any PII / high-cardinality tag (per internal observability rules).
 
+## Scripts
+
+- [`scripts/generate-rag-corpus-embeddings.sh`](scripts/generate-rag-corpus-embeddings.sh) —
+  one-time operator tool (ADR-30). Generates OpenAI embeddings for the hand-authored RAG corpus;
+  output is pasted into `rpe-triage-agent/src/main/resources/db.migration/V3__seed_triage_rag_corpus.sql`.
+  **Not run automatically, not part of `mvn verify`/CI** — same class as `kafka/dlt-redrive.sh`.
+  Requires `curl`, `jq`, a real `SPRING_AI_OPENAI_API_KEY`.
+
 ## Follow-ups
 
 - Cross-service distributed tracing is wired app-level (ADR-25: Observation → OTel → OTLP, fail-open);

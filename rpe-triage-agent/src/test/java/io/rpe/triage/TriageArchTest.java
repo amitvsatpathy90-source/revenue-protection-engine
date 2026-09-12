@@ -37,7 +37,9 @@ class TriageArchTest {
                 .importPackages("io.rpe");
     }
 
-    /** @KafkaListener methods must return void — Spring Kafka silently ignores other returns. */
+    /**
+     * @KafkaListener methods must return void — Spring Kafka silently ignores other returns.
+     */
     @Test
     void kafkaListenerMethodsMustReturnVoid() {
         ArchRule rule = methods()
@@ -46,7 +48,9 @@ class TriageArchTest {
         rule.check(classes);
     }
 
-    /** synchronized pins virtual-thread carriers — use ReentrantLock (virtual thread pinning constraint). */
+    /**
+     * synchronized pins virtual-thread carriers — use ReentrantLock (virtual thread pinning constraint).
+     */
     @Test
     void noSynchronizedMethods() {
         ArchRule rule = noMethods().should().haveModifier(JavaModifier.SYNCHRONIZED);
@@ -112,5 +116,20 @@ class TriageArchTest {
                 }
             }
         };
+    }
+
+    /**
+     * DegradedTriageFallback is the static, LLM-independent verdict path (the triage agent design discipline) —
+     * it must produce a valid degraded verdict even if Spring AI itself is misconfigured or absent.
+     * A Spring AI import here would silently reintroduce the dependency this class exists to avoid.
+     */
+    @Test
+    void degradedFallbackHasNoSpringAiImports() {
+        ArchRule rule = noClasses()
+                .that().haveSimpleName("DegradedTriageFallback")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage("org.springframework.ai..");
+        rule.check(classes);
     }
 }

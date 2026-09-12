@@ -67,6 +67,8 @@ payment.alerts (Kafka topic, 3 partitions)  ← at-least-once; consumers dedupe 
                                                               ┌─── rpe-triage-agent ────────────────────┐
                                                               │  Triage consumer (VT, own group)        │
                                                               │  inbox INSERT triaged_alerts ON CONFLICT│
+                                                              │  RAG (skip if chat CB open): embed →    │
++                                                             │  pgvector retrieve (indep. R4j, ADR-30) │
                                                               │  ChatClient agent loop (≤3 tool rounds) │
                                                               │  R4j: TimeLimiter+CB+Bulkhead+RL+Retry  │
                                                               │  Fallback: DEGRADED_RULE_BASED verdict  │
@@ -86,7 +88,9 @@ Four independently deployable services. Each builds via `mvn -f <svc>/pom.xml ve
 | `rpe-detection-service` | Ingest + atomic detect + persist alert-intent (+ HTTP/actuator) | all Redis keys; `outbox` rows | consumes `payment.events` → `payment.events.DLT` |
 | `rpe-relay-service` | At-least-once outbox→topic delivery (exactly-once realized at the consumer via `alert_id` dedup) | `outbox` status transitions only | produces `payment.alerts` |
 | `rpe-alert-service` | Idempotent alert actioning | `processed_alerts` | consumes `payment.alerts` → `payment.alerts.DLT` |
-| `rpe-triage-agent` | Advisory LLM enrichment (Spring AI, ADR-15) | `triaged_alerts` | consumes `payment.alerts` → `payment.alerts.triaged` → `payment.alerts.triage.DLT` (ADR-18) |
+| `rpe-triage-agent` | Advisory LLM enrichment (Spring AI, ADR-15) + RAG grounding (pgvector, ADR-30) | `triaged_alerts`, `triage_rag_corpus` | consumes `payment.alerts` → `payment.alerts.triaged` → `payment.alerts.triage.DLT` (ADR-18) |
+| RAG corpus is hand-authored and static | No automatic ingestion; a stale corpus silently returns outdated behavioral context | Behavioral-only content (no thresholds) bounds the blast radius of staleness; `rag.corpus.last_ingested_at` gauge signals age (ADR-30) |
+| RAG retrieval failure degrades narrative only | Embedding/retrieval CB-open never blocks or delays the LLM call | Independent R4j boundaries per ADR-29; `rag_context_used=false` on any failure path (ADR-30) |
 
 The detection core (`rpe-detection-service`) is **never split**: the atomic Lua gate, per-account lane, and all `Detector`s are one indivisible service (ADR-17 non-goal #1). New detection rules are new `Detector`s inside that service, never new services.
 
@@ -105,6 +109,8 @@ Canonical container topology: `docker compose --env-file .env -f deploy/docker-c
 | Relay Kafka producer | relay | Virtual thread | Serialised per instance |
 | Alert consumer | alert-service | Virtual threads | Blocking consumer model |
 | Triage consumer + LLM call | triage-agent | Virtual threads; R4j-wrapped | Blocking HTTP; bounded by TimeLimiter + Bulkhead |
+| RAG embedding call | triage-agent | Virtual thread; R4j-wrapped | Independent boundary from chat — never shares a CB (ADR-29/30) |
+| RAG retrieval query | triage-agent | Dedicated platform-thread pool | Raw pgvector JDBC — same JVM-pin constraint as any JDBC call |
 
 ### Data Durability Layers
 
@@ -124,7 +130,7 @@ Canonical container topology: `docker compose --env-file .env -f deploy/docker-c
 - **Redpanda** (local Kafka API) — `payment.events`, `payment.alerts`, `payment.alerts.triaged`; DLTs: `payment.events.DLT`, `payment.alerts.DLT`, `payment.alerts.triage.DLT` (ADR-18)
 - **Redis 7.2.5** — ALL hot-path state (velocity, z-score, geo, dedup) via atomic Lua gate
   - AOF: `appendonly yes`, `appendfsync everysec`, `maxmemory 96mb`, `volatile-lru`
-- **PostgreSQL 16.3** — outbox + processed_alerts (alert boundary only, ~1% of events)
+- **PostgreSQL 16.3** (pgvector) — outbox + processed_alerts + triage_rag_corpus (ADR-30; alert boundary only, ~1% of events)
 - **Resilience4j** — CircuitBreaker + Bulkhead per outbound boundary
 - **Micrometer → Prometheus → Grafana** — observability
 
@@ -135,7 +141,12 @@ Canonical container topology: `docker compose --env-file .env -f deploy/docker-c
 ```bash
 # 1. Copy env template and FILL IN values — secrets have no checked-in defaults.
 #    docker compose and the app both fail fast if POSTGRES_PASSWORD / DB_PASSWORD /
-#    GRAFANA_PASSWORD are unset (security rule: secrets via environment only).
+#    GRAFANA_PASSWORD / SPRING_AI_OPENAI_API_KEY are unset (security rule: secrets via environment only).
+> **ADR-30 (RAG-augmented triage) is PROPOSED, not ACCEPTED.** `V2__create_triage_rag_corpus.sql`
+> (schema) is applied; `V3__seed_triage_rag_corpus.sql` (corpus embeddings) is pending real
+> OpenAI-generated vectors via `deploy/scripts/generate-rag-corpus-embeddings.sh` — see that
+> script's header for the manual operator flow. Until `V3` is committed, `rpe-triage-agent`
+> runs without RAG grounding (narrative-only degradation, not a failure — ADR-30).
 cp .env.example .env
 
 # 2. Generate RSA keypairs and static JWKS for local Actuator auth (ADR-19)
@@ -324,6 +335,8 @@ missed detections; stats accuracy preserved.
 | Triage threshold/severity calibration unvalidated | Synthetic data; no precision/recall claim | Calibration requires labeled production data (ADR-15) |
 | Degraded mode loses enrichment, not alerts | CB open ⇒ `DEGRADED_RULE_BASED` static severity; narrative quality drops | Delivery is never gated on triage (ADR-15) |
 | LLM spend bounded per-instance | Effective global cap = N × per_instance (R4j RateLimiter) | Distributed counter is the upgrade path (ADR-15) |
+| RAG corpus is hand-authored and static | No automatic ingestion; a stale corpus silently returns outdated behavioral context | Behavioral-only content (no thresholds) bounds staleness blast radius; `rag.corpus.last_ingested_at` gauge signals age (ADR-30) |
+| RAG retrieval failure degrades narrative only | Embedding/retrieval CB-open never blocks or delays the LLM call | Independent R4j boundaries per ADR-29; `rag_context_used=false` on any failure path (ADR-30) |
 | Shared Postgres, not DB-per-service | detection+relay share `outbox`; triage reads `processed_alerts` | Single-writer ownership + contract-grade access; production path: per-service schema + scoped GRANTs (ADR-17 §5.2) |
 | Decomposition Stages 1–6 complete | Per-service Postgres schema + scoped GRANTs, k8s topology, and cross-service tracing are built (ADR-17 §7, ADR-25) | Production hardening (mTLS, HA IdP, RF≥3) remains the documented upgrade path |
 | `payment.alerts.triage.DLT` requires custom `DeadLetterPublishingRecoverer` | Spring Kafka default suffix resolves to wrong owner topic; silence failure at runtime | Custom bean must be explicitly configured in `rpe-triage-agent`; integration test asserts zero records land on `payment.alerts.DLT` (ADR-18) |
@@ -334,6 +347,7 @@ missed detections; stats accuracy preserved.
 | Tracing is best-effort and lab-sampled | Fail-open — a down/absent collector drops spans, never blocks detection; sampling is `1.0` in lab only | Persisted `traceparent` self-corrects on NULL (fresh trace); production must tie sampling to volume (ADR-25) |
 | `asyncAcks` widens duplicate delivery after a failure | Lane-completion-order acks mean a crash replays the whole un-acked offset gap, not just one event | Absorbed by the gate's dedup pre-check + deterministic `alert_id`; this is what makes "uncommitted offset ⇒ redelivery" structurally true rather than aspirational (ADR-26) |
 | Re-driven `payment.events.DLT` records are dedup-blocked by construction | Gate dedup key (step 4) is already set before Java sees the result, so detectors never re-run on re-drive | `ALERT_UNDURABLE` outcomes reconstruct deterministically to the outbox; any other post-gate failure is fail-visible and parks for an operator, not silently dropped (ADR-26) |
+| ADR-30 is PROPOSED, not ACCEPTED | `V3__seed_triage_rag_corpus.sql` pending real OpenAI embeddings; until committed, triage runs with zero RAG grounding | Narrative-only degradation, not a failure — see `deploy/scripts/generate-rag-corpus-embeddings.sh` for the manual operator flow (ADR-30) |
 
 ---
 

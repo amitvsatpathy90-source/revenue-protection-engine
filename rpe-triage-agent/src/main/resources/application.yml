@@ -5,10 +5,12 @@ server:
   shutdown: graceful
 
 spring:
-  # Per-phase cap for graceful-shutdown ordering. Sized above the 12s LLM TimeLimiter so an
-  # in-flight triage finishes rather than being killed (ADR-22 / ai-triage-rules §5).
+  # Per-phase cap for graceful-shutdown ordering. Sized above the combined chat+RAG
+  # TimeLimiter budget (12s chat + 5s padded RAG ceiling = 17s) so an in-flight triage
+  # finishes rather than being killed (ADR-22). Provisional — re-derive once a real
+  # RAG latency sample exists (ADR-30).
   lifecycle:
-    timeout-per-shutdown-phase: 20s
+    timeout-per-shutdown-phase: 25s
   application:
     name: rpe-triage-agent
   threads:
@@ -75,10 +77,18 @@ spring:
         options:
           model: ${TRIAGE_LLM_MODEL:gpt-4o-mini}
           temperature: 0.2
+      # Embedding-side retry wiring CONFIRMED via bytecode (2026-09-12):
+      #   javap -p -c -classpath spring-ai-autoconfigure-model-openai-2.0.0.jar \
+      #     org.springframework.ai.model.openai.autoconfigure.OpenAiEmbeddingAutoConfiguration
+      # shows a call to OpenAiCommonProperties.getMaxRetries() — same shared field as chat.
+      # SDK retry fully disabled on both models; R4j is the sole retrier per boundary (ADR-29).
+      embedding:
+        options:
+          model: ${TRIAGE_EMBEDDING_MODEL:text-embedding-3-small}
     retry:
       # Spring AI's LEGACY RetryTemplate — belt-and-suspenders. The retry layer that actually
       # stacked on R4j is the OpenAI SDK's own (chat.max-retries: 0 above); this covers any path
-      # still routed through the RetryTemplate. 1 attempt = disabled; R4j owns retry (rules §5).
+      # still routed through the RetryTemplate. 1 attempt = disabled; R4j owns retry.
       max-attempts: 1
 
 management:
@@ -138,3 +148,32 @@ triage:
     batch: 50
   dev:
     log-prompts: false            # dev profile only; never enable in compose defaults
+  rag:
+    # Every value below is PROVISIONAL except embedding.bulkhead-concurrent/rpm — pending
+    # real latency samples against the actual pgvector query and embedding calls (ADR-30).
+    embedding:
+      time-limit-ms: 3000
+      slow-call-ms: 2000
+      slow-rate-threshold: 50
+      failure-rate-threshold: 50
+      sliding-window-size: 20
+      half-open-calls: 3
+      wait-open-ms: 30000
+      bulkhead-concurrent: 2                        # sourced: OpenAI Tier-1 headroom
+      rpm: ${TRIAGE_RAG_EMBEDDING_RPM:300}           # sourced: OpenAI Tier-1 3000rpm ÷10 headroom
+      retry-max-attempts: 3
+      retry-backoff-ms: 500
+    retrieval:
+      # No rpm — local JDBC call, not billed.
+      top-k: 5
+      similarity-threshold: 0.75
+      time-limit-ms: 2000
+      slow-call-ms: 1000
+      slow-rate-threshold: 50
+      failure-rate-threshold: 50
+      sliding-window-size: 20
+      half-open-calls: 3
+      wait-open-ms: 15000
+      bulkhead-concurrent: 5
+      retry-max-attempts: 2
+      retry-backoff-ms: 200

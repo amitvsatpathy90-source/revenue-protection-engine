@@ -1,7 +1,9 @@
 package io.rpe.triage.service;
 
 import io.rpe.triage.TriageTestSupport;
+import io.rpe.triage.agent.LlmResilience;
 import io.rpe.triage.agent.TriageAgent;
+import io.rpe.triage.config.LlmResilienceConfig;
 import io.rpe.triage.domain.PaymentAlert;
 import io.rpe.triage.domain.TriagedAlertMessage;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -36,9 +38,24 @@ class TriageServiceReplayTest {
                                   TriageTestSupport.CapturingPublisher publisher) {
         TriageAgent agent = TriageTestSupport.agent(
                 model, TriageTestSupport.lenientProps(), registry, vt);
+
+        // This file tests inbox-dedup only, not RAG. Force the chat CB open so
+        // fetchRagContext() short-circuits before touching either RAG client —
+        // null is safe ONLY because that CB-state check runs first in
+        // TriageService.fetchRagContext(); if that ordering ever changes, this
+        // NPEs instead of failing on a real assertion. Scratch meter registry,
+        // not the test's `registry` — LlmResilienceConfig binds CB metrics
+        // under the fixed name "llm", and this is a second, unrelated instance
+        // from the one wired inside TriageTestSupport.agent() above (that one
+        // stays CLOSED and actually serves the stub LLM call).
+        LlmResilience ragGateClosedOff = new LlmResilienceConfig()
+                .llmResilience(TriageTestSupport.lenientProps(), new SimpleMeterRegistry());
+        ragGateClosedOff.circuitBreaker().transitionToOpenState();
+
         return new TriageService(
                 inbox, agent, new DegradedTriageFallback(), publisher,
-                objectMapper, registry, TriageTestSupport.lenientProps());
+                objectMapper, registry, TriageTestSupport.lenientProps(),
+                null, null, ragGateClosedOff);
     }
 
     @Test
