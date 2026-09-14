@@ -16,6 +16,7 @@ import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
@@ -48,7 +49,7 @@ import java.util.stream.Collectors;
 @Component
 public class TriageAgent {
 
-    private static final Logger log = LoggerFactory.getLogger(TriageAgent.class);
+    public static final String TRIAGE_SCHEMA_FAILURE = "triage.schema.failure";
 
     /** Enforced in code. Saturation shows in the triage_tool_rounds histogram (ADR-15 §8.3). */
     static final int MAX_TOOL_ROUNDS = 3;
@@ -156,7 +157,7 @@ public class TriageAgent {
             if (!response.hasToolCalls()) {
                 break;
             }
-            AssistantMessage assistant = response.getResult().getOutput();
+            AssistantMessage assistant = getResultOrThrow(response).getOutput();
             assistant.getToolCalls().forEach(tc -> executedToolCallIds.add(tc.id()));
 
             ToolExecutionResult toolResult = toolCallingManager.executeToolCalls(prompt, response);
@@ -191,7 +192,8 @@ public class TriageAgent {
                 null,
                 Instant.now(),
                 TriagedAlertMessage.SCHEMA_VERSION,
-                !ragContext.isEmpty());
+                !ragContext.isEmpty(),
+                props.rag().corpusMode());
     }
 
     /** Delegates with no RAG context — existing callers/tests get identical prior output. */
@@ -225,15 +227,38 @@ public class TriageAgent {
                 .collect(Collectors.joining("\n"));
     }
 
+    /**
+     * Parses and validates the model verdict, rejecting empty or invalid completions
+     * through the terminal schema-failure path.
+     */
     private TriageVerdict parseVerdict(ChatResponse response) {
-        String content = response.getResult().getOutput().getText();
+        String content = getResultOrThrow(response).getOutput().getText();
+        if(content == null){
+            // Empty/blocked generation — same terminal path as schema failure, no retry
+            meterRegistry.counter(TRIAGE_SCHEMA_FAILURE).increment();
+            throw new TriageAgentException("empty-completion");
+        }
         try {
             return outputConverter.convert(content).validated();
         } catch (RuntimeException e) {   // converter + record validation throw only unchecked
-            meterRegistry.counter("triage.schema.failure").increment();
+            meterRegistry.counter(TRIAGE_SCHEMA_FAILURE).increment();
             // Exception class only — completion bodies never reach logs
             throw new TriageAgentException("schema-validation", e);
         }
+    }
+
+    /**
+     * Returns the model generation or fails with a terminal triage exception when
+     * the provider returns an empty generation list.
+     */
+    private Generation getResultOrThrow(ChatResponse response) {
+        Generation result = response.getResult();
+        if (result == null) {
+            // Empty generations list — provider/CB returned zero completions
+            meterRegistry.counter(TRIAGE_SCHEMA_FAILURE).increment();
+            throw new TriageAgentException("empty-chat-response");
+        }
+        return result;
     }
 
     private List<ToolCallback> toolsFor(String ruleName) {

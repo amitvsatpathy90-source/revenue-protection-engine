@@ -83,3 +83,6 @@ redis-data/
 redpanda-data/
 grafana-data/
 prometheus-data/
+
+# --- Local/generated RAG artifacts ---
+corpus-insert.sql

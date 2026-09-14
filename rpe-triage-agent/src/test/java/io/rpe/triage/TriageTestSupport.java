@@ -8,6 +8,7 @@ import io.rpe.triage.agent.TriageTools;
 import io.rpe.triage.config.LlmResilienceConfig;
 import io.rpe.triage.config.TriageProperties;
 import io.rpe.triage.domain.PaymentAlert;
+import io.rpe.triage.domain.RagCorpusMode;
 import io.rpe.triage.domain.TriagedAlertMessage;
 import io.rpe.triage.inbox.TriageInbox;
 import io.rpe.triage.service.TriagedVerdictPublisher;
@@ -70,7 +71,18 @@ public final class TriageTestSupport {
                         5000, 4000, 50f, 50f, 100, 3, 10_000, 5, 100_000, 1, 10),
                 new TriageProperties.Sweep(Duration.ofMinutes(5), 50),
                 "v1",
-                new TriageProperties.Dev(false));
+                new TriageProperties.Dev(false),
+                lenientRag());
+    }
+
+    /** Matches application.yml's PLACEHOLDER shape closely enough for CB/timeout math to never trip in tests. */
+    private static TriageProperties.Rag lenientRag() {
+        return new TriageProperties.Rag(
+                new TriageProperties.Rag.Embedding(
+                        5000, 4000, 50f, 50f, 20, 3, 10_000, 5, 300, 1, 10),
+                new TriageProperties.Rag.Retrieval(
+                        5000, 4000, 50f, 50f, 20, 3, 10_000, 5, 1, 10, 5, 0.75),
+                RagCorpusMode.PLACEHOLDER);
     }
 
     /** lenientProps with a small sweep batch — forces multiple claim cycles per sweep in tests. */
@@ -78,7 +90,7 @@ public final class TriageTestSupport {
         var p = lenientProps();
         return new TriageProperties(
                 p.llm(), new TriageProperties.Sweep(Duration.ofMinutes(5), batch),
-                p.promptVersion(), p.dev());
+                p.promptVersion(), p.dev(), p.rag());
     }
 
     /** Tight window (2 calls), 50ms slow threshold — opens the CB fast in tests. */
@@ -88,7 +100,8 @@ public final class TriageTestSupport {
                         5000, 50, 50f, 50f, 2, 1, 10_000, 5, 100_000, 1, 10),
                 new TriageProperties.Sweep(Duration.ofMinutes(5), 50),
                 "v1",
-                new TriageProperties.Dev(false));
+                new TriageProperties.Dev(false),
+                lenientRag());
     }
 
     // ── Builders ─────────────────────────────────────────────────────────────

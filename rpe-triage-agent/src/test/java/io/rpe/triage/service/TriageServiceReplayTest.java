@@ -36,8 +36,10 @@ class TriageServiceReplayTest {
     private TriageService service(TriageTestSupport.StubChatModel model,
                                   TriageTestSupport.InMemoryInbox inbox,
                                   TriageTestSupport.CapturingPublisher publisher) {
-        TriageAgent agent = TriageTestSupport.agent(
-                model, TriageTestSupport.lenientProps(), registry, vt);
+
+        var props = TriageTestSupport.lenientProps();
+
+        TriageAgent agent = TriageTestSupport.agent(model, props, registry, vt);
 
         // This file tests inbox-dedup only, not RAG. Force the chat CB open so
         // fetchRagContext() short-circuits before touching either RAG client —
@@ -53,9 +55,9 @@ class TriageServiceReplayTest {
         ragGateClosedOff.circuitBreaker().transitionToOpenState();
 
         return new TriageService(
-                inbox, agent, new DegradedTriageFallback(), publisher,
-                objectMapper, registry, TriageTestSupport.lenientProps(),
-                null, null, ragGateClosedOff);
+                inbox, agent, new DegradedTriageFallback(props), publisher,
+                objectMapper, registry, props, null, null,
+                ragGateClosedOff);
     }
 
     @Test

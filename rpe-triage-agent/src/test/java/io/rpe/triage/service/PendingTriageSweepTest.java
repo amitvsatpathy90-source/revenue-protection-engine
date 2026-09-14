@@ -1,6 +1,7 @@
 package io.rpe.triage.service;
 
 import io.rpe.triage.TriageTestSupport;
+import io.rpe.triage.config.TriageProperties;
 import io.rpe.triage.domain.TriagedAlertMessage;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -40,9 +41,10 @@ class PendingTriageSweepTest {
     void stalePendingRowsAreReEmittedAsDegradedVerdicts() {
         var inbox = new TriageTestSupport.InMemoryInbox();
         var publisher = new TriageTestSupport.CapturingPublisher();
+        var props = TriageTestSupport.lenientProps();
         var sweep = new PendingTriageSweep(
-                inbox, new DegradedTriageFallback(), publisher,
-                objectMapper, registry, TriageTestSupport.lenientProps());
+                inbox, new DegradedTriageFallback(props), publisher,
+                objectMapper, registry, props);
 
         UUID a1 = UUID.randomUUID();
         UUID a2 = UUID.randomUUID();
@@ -67,9 +69,10 @@ class PendingTriageSweepTest {
     void emptyPendingSetPublishesNothing() {
         var inbox = new TriageTestSupport.InMemoryInbox();
         var publisher = new TriageTestSupport.CapturingPublisher();
+        var props = TriageTestSupport.lenientProps();
         var sweep = new PendingTriageSweep(
-                inbox, new DegradedTriageFallback(), publisher,
-                objectMapper, registry, TriageTestSupport.lenientProps());
+                inbox, new DegradedTriageFallback(props), publisher,
+                objectMapper, registry, props);
 
         sweep.sweep();
 
@@ -80,9 +83,10 @@ class PendingTriageSweepTest {
     void publishFailureLeavesRowPendingAndSweepsTheRest() {
         var inbox = new TriageTestSupport.InMemoryInbox();
         var publisher = new TriageTestSupport.CapturingPublisher();
+        var props = TriageTestSupport.lenientProps();
         var sweep = new PendingTriageSweep(
-                inbox, new DegradedTriageFallback(), publisher,
-                objectMapper, registry, TriageTestSupport.lenientProps());
+                inbox, new DegradedTriageFallback(props), publisher,
+                objectMapper, registry, props);
 
         UUID failing   = UUID.randomUUID();
         UUID surviving = UUID.randomUUID();
@@ -118,9 +122,9 @@ class PendingTriageSweepTest {
         var topic = new TriageTestSupport.CapturingPublisher();   // shared payment.alerts.triaged
         var props = TriageTestSupport.sweepBatchProps(5);
         var sweepA = new PendingTriageSweep(
-                inbox, new DegradedTriageFallback(), topic, objectMapper, registry, props);
+                inbox, new DegradedTriageFallback(props), topic, objectMapper, registry, props);
         var sweepB = new PendingTriageSweep(
-                inbox, new DegradedTriageFallback(), topic, objectMapper, registry, props);
+                inbox, new DegradedTriageFallback(props), topic, objectMapper, registry, props);
 
         Set<UUID> seeded = new HashSet<>();
         for (int i = 0; i < 20; i++) {
@@ -176,9 +180,10 @@ class PendingTriageSweepTest {
     void lateConsumerMarkCannotOverwriteASweptRow() {
         var inbox = new TriageTestSupport.InMemoryInbox();
         var publisher = new TriageTestSupport.CapturingPublisher();
+        var props = TriageTestSupport.lenientProps();
         var sweep = new PendingTriageSweep(
-                inbox, new DegradedTriageFallback(), publisher,
-                objectMapper, registry, TriageTestSupport.lenientProps());
+                inbox, new DegradedTriageFallback(props), publisher,
+                objectMapper, registry, props);
 
         UUID alertId = UUID.randomUUID();
         inbox.seedPending(alertId, "acct-1", "velocity");

@@ -149,6 +149,9 @@ triage:
   dev:
     log-prompts: false            # dev profile only; never enable in compose defaults
   rag:
+    # Local/dev corpus uses deterministic placeholder vectors;
+    # switch to REAL after generating embeddings.
+    corpus-mode: PLACEHOLDER
     # Every value below is PROVISIONAL except embedding.bulkhead-concurrent/rpm — pending
     # real latency samples against the actual pgvector query and embedding calls (ADR-30).
     embedding:

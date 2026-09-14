@@ -342,8 +342,8 @@ missed detections; stats accuracy preserved.
 | Tracing is best-effort and lab-sampled | Fail-open — a down/absent collector drops spans, never blocks detection; sampling is `1.0` in lab only | Persisted `traceparent` self-corrects on NULL (fresh trace); production must tie sampling to volume (ADR-25) |
 | `asyncAcks` widens duplicate delivery after a failure | Lane-completion-order acks mean a crash replays the whole un-acked offset gap, not just one event | Absorbed by the gate's dedup pre-check + deterministic `alert_id`; this is what makes "uncommitted offset ⇒ redelivery" structurally true rather than aspirational (ADR-26) |
 | Re-driven `payment.events.DLT` records are dedup-blocked by construction | Gate dedup key (step 4) is already set before Java sees the result, so detectors never re-run on re-drive | `ALERT_UNDURABLE` outcomes reconstruct deterministically to the outbox; any other post-gate failure is fail-visible and parks for an operator, not silently dropped (ADR-26) |
-| ADR-30 is PROPOSED, not ACCEPTED | `V3__seed_triage_rag_corpus.sql` pending real OpenAI embeddings; until committed, triage runs with zero RAG grounding | Narrative-only degradation, not a failure — see `deploy/scripts/generate-rag-corpus-embeddings.sh` for the manual operator flow (ADR-30) |
-
+| ADR-30 is PROPOSED, not ACCEPTED | `V3__seed_triage_rag_corpus.sql` pending real OpenAI embeddings; until committed, triage runs with placeholder (non-semantic) RAG grounding, not zero | Narrative-only degradation, not a failure — see `deploy/scripts/generate-rag-corpus-embeddings.sh` for the manual operator flow (ADR-30) |
+| Placeholder corpus vectors | Local/dev corpus is seeded with deterministic placeholder vectors (`setseed(0.42)`), not real embeddings; retrieval can mechanically succeed and return semantically arbitrary matches, so `rag_context_used=true` does not currently distinguish placeholder retrieval from real grounding. |
 ---
 
 ## Architectural Decisions

@@ -20,11 +20,13 @@ deployable services — the topology the ADR-17 §7 strangler extraction converg
 
 All four services are extracted sibling modules (ADR-17 §7 Stages 1–5 complete: extraction,
 contract/ArchUnit guards, and this compose as the canonical topology). The repo root carries
-no pom — each builds via `mvn -f <svc>/pom.xml verify` and ships its own `Dockerfile`. The alert service
-owns `processed_alerts` (its own Flyway, `flyway_schema_history_alert`); detection owns the `outbox`
-writer + all Redis keys. Stage 6 (`k8s/` in this directory — CNPG, per-service schemas/roles/GRANTs,
-NetworkPolicies, OTel/Tempo stack) is **authored but its in-cluster e2e run is still pending**; until
-that run is attested, this compose file remains the only verified topology.
+no pom — each builds via `mvn -f <svc>/pom.xml verify` and ships its own `Dockerfile`.
+PostgreSQL is now built from `deploy/postgres/Dockerfile` (pgvector + `jit=off`) rather than
+pulled as a bare image tag. The alert service owns `processed_alerts` (its own Flyway,
+`flyway_schema_history_alert`); detection owns the `outbox` writer + all Redis keys.
+Stage 6 (`k8s/` in this directory — CNPG, per-service schemas/roles/GRANTs,
+NetworkPolicies, OTel/Tempo stack) is **authored but its in-cluster e2e run is still pending**;
+until that run is attested, this compose file remains the only verified topology.
 
 ## Principles (enforced by `ADR-17`)
 
