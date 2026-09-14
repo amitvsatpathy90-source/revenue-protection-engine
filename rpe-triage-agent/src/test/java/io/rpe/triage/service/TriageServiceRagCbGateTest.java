@@ -77,7 +77,7 @@ class TriageServiceRagCbGateTest {
         var inbox = new TriageTestSupport.InMemoryInbox();
         var publisher = new TriageTestSupport.CapturingPublisher();
         var service = new TriageService(
-                inbox, agent, new DegradedTriageFallback(), publisher,
+                inbox, agent, new DegradedTriageFallback(TriageTestSupport.lenientProps()), publisher,
                 TriageTestSupport.objectMapper(), registry, props,
                 embedding, retrieval, resilience);
 

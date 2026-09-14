@@ -50,6 +50,7 @@ class LlmCircuitBreakerTest {
             try {
                 client.call(new Prompt("probe"));
             } catch (RuntimeException ignored) {
+                // Expected: the slow provider call may surface a runtime exception while opening the breaker.
             }
         }
 
@@ -58,7 +59,8 @@ class LlmCircuitBreakerTest {
 
         // Post-open: must fail fast (circuit-open), NOT wait on the slow provider.
         long startNanos = System.nanoTime();
-        assertThatThrownBy(() -> client.call(new Prompt("probe")))
+        var probe = new Prompt("probe");
+        assertThatThrownBy(() -> client.call(probe))
                 .isInstanceOf(TriageAgentException.class)
                 .extracting(e -> ((TriageAgentException) e).reason())
                 .isEqualTo("circuit-open");
@@ -78,6 +80,7 @@ class LlmCircuitBreakerTest {
             try {
                 client.call(new Prompt("probe"));
             } catch (RuntimeException ignored) {
+                // Expected: the slow provider call may surface a runtime exception while opening the breaker.
             }
         }
         assertThat(resilience.circuitBreaker().getState()).isEqualTo(CircuitBreaker.State.OPEN);
@@ -90,7 +93,7 @@ class LlmCircuitBreakerTest {
         var inbox = new TriageTestSupport.InMemoryInbox();
         var publisher = new TriageTestSupport.CapturingPublisher();
         var service = new TriageService(
-                inbox, agent, new DegradedTriageFallback(), publisher,
+                inbox, agent, new DegradedTriageFallback(props), publisher,
                 TriageTestSupport.objectMapper(), registry, props, null, null, resilience);
 
         service.process(TriageTestSupport.alert("geo"));

@@ -39,7 +39,8 @@ public record TriagedAlertMessage(
         String   degradedReason,   // null on the LLM path
         Instant  triagedAt,
         String   schemaVersion,
-        boolean  ragContextUsed    // ADR-30 — true iff RAG context was non-empty at triage time
+        boolean  ragContextUsed,   // ADR-30 — true iff RAG context was non-empty at triage time
+        RagCorpusMode corpusMode   // ADR-30 — embedding corpus used for that retrieval: PLACEHOLDER or REAL
 ) {
     /**
      * ADDITIVE constructor at the pre-ADR-30 15-arg shape — keeps every existing
@@ -53,7 +54,7 @@ public record TriagedAlertMessage(
             Instant triagedAt, String schemaVersion) {
         this(alertId, eventId, accountId, ruleName, severity, narrative, evidence,
                 confidence, triageStatus, promptVersion, evidenceStripped, toolRounds,
-                degradedReason, triagedAt, schemaVersion, false);
+                degradedReason, triagedAt, schemaVersion, false, RagCorpusMode.PLACEHOLDER);
     }
 
     public static final String STATUS_LLM_TRIAGED        = "LLM_TRIAGED";

@@ -1,6 +1,8 @@
 package io.rpe.triage.config;
 
+import io.rpe.triage.domain.RagCorpusMode;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
 import java.time.Duration;
 
@@ -14,6 +16,11 @@ public record TriageProperties(
         String promptVersion,
         Dev    dev,
         Rag    rag) {
+
+    /** Selects the canonical constructor for configuration binding. */
+    @ConstructorBinding
+    public TriageProperties {
+    }
 
     /** Additive ctor at the pre-ADR-30 4-arg shape — existing callers/fixtures compile unmodified. */
     public TriageProperties(Llm llm, Sweep sweep, String promptVersion, Dev dev) {
@@ -39,7 +46,17 @@ public record TriageProperties(
     public record Dev(boolean logPrompts) {}
 
     /** ADR-29: embedding + retrieval get fully independent R4j config — no field sharing. */
-    public record Rag(Embedding embedding, Retrieval retrieval) {
+    public record Rag(Embedding embedding, Retrieval retrieval, RagCorpusMode corpusMode) {
+
+        /** Selects the canonical constructor for configuration binding — same fix as the outer record. */
+        @ConstructorBinding
+        public Rag {
+        }
+
+        /** Additive ctor — pre-corpus-mode 2-arg shape, defaults to PLACEHOLDER (current local state). */
+        public Rag(Embedding embedding, Retrieval retrieval) {
+            this(embedding, retrieval, RagCorpusMode.PLACEHOLDER);
+        }
 
         public record Embedding(
                 long  timeLimitMs,

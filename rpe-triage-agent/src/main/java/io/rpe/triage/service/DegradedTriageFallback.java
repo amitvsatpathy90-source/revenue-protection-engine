@@ -1,5 +1,6 @@
 package io.rpe.triage.service;
 
+import io.rpe.triage.config.TriageProperties;
 import io.rpe.triage.domain.PaymentAlert;
 import io.rpe.triage.domain.Severity;
 import io.rpe.triage.domain.TriagedAlertMessage;
@@ -25,6 +26,14 @@ import java.util.UUID;
  */
 @Component
 public class DegradedTriageFallback {
+
+    /** ADR-30 — exposes configured RAG corpus mode to the fallback path. */
+    private final TriageProperties props;
+
+    /** Use the same configured corpus mode as the normal triage path. */
+    public DegradedTriageFallback(TriageProperties props) {
+        this.props = props;
+    }
 
     /** Static rule → severity map. Calibration is unvalidated (synthetic data) — see Architecture Spec limitations. */
     private static final Map<String, Severity> SEVERITY_BY_RULE = Map.of(
@@ -72,6 +81,7 @@ public class DegradedTriageFallback {
                 degradedReason,
                 Instant.now(),
                 TriagedAlertMessage.SCHEMA_VERSION,
-                ragContextUsed);           // ADR-30 trailing field
+                ragContextUsed,           // ADR-30 trailing field
+                props.rag().corpusMode());
     }
 }
