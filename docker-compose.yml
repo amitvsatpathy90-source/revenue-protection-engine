@@ -48,22 +48,22 @@ services:
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
-        rpk topic create payment.events --partitions 12 --replication-factor 1 --brokers redpanda:9092 || true
-        rpk topic create payment.alerts --partitions 3 --replication-factor 1 --brokers redpanda:9092 || true
+        rpk topic create payment.events --partitions 12 --replicas 1 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts --partitions 3 --replicas 1 --brokers redpanda:9092 || true
         # DLT + parked retention is PINNED (14d) with segment.ms (1d), not broker-default: retention
         # deletes only ROLLED segments, and DLTs are low-volume, so an unrolled active segment makes
         # the default window unreliable in both directions. The dedup-guard contract (System Invariants
         # Known Limitations): processed_alerts purge (30d) > DLT+parked retention (14d) + re-drive latency.
-        rpk topic create payment.events.DLT --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
-        rpk topic create payment.alerts.DLT --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
-        rpk topic create payment.alerts.triage.DLT --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
-        rpk topic create payment.alerts.triaged --partitions 3 --replication-factor 1 --brokers redpanda:9092 || true
+        rpk topic create payment.events.DLT --partitions 3 --replicas 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts.DLT --partitions 3 --replicas 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts.triage.DLT --partitions 3 --replicas 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts.triaged --partitions 3 --replicas 1 --brokers redpanda:9092 || true
         # Re-drive parking topics (ADR-23): records that re-poisoned past the attempt cap land here.
         # Same pinned retention: parking is quarantine with a KNOWN window — RpeDltParked pages at
         # for:0m so the fix-vs-discard decision happens inside these 14 days.
-        rpk topic create payment.events.DLT.parked --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
-        rpk topic create payment.alerts.DLT.parked --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
-        rpk topic create payment.alerts.triage.DLT.parked --partitions 3 --replication-factor 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        rpk topic create payment.events.DLT.parked --partitions 3 --replicas 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts.DLT.parked --partitions 3 --replicas 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
+        rpk topic create payment.alerts.triage.DLT.parked --partitions 3 --replicas 1 -c retention.ms=1209600000 -c segment.ms=86400000 --brokers redpanda:9092 || true
         echo "Topics ready."
     restart: "no"
 
