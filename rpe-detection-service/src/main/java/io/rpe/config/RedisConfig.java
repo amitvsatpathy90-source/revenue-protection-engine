@@ -5,6 +5,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 @Configuration
@@ -20,8 +22,7 @@ public class RedisConfig {
     @Bean
     @SuppressWarnings("rawtypes")
     public DefaultRedisScript<List> gateScript() {
-        DefaultRedisScript<List> script = new DefaultRedisScript<>();
-        script.setLocation(new ClassPathResource("lua/gate.lua"));
+        DefaultRedisScript<List> script = new DefaultRedisScript<>(loadLuaScript("lua/gate.lua"));
         script.setResultType(List.class);
         return script;
     }
@@ -36,9 +37,25 @@ public class RedisConfig {
     @Bean
     @SuppressWarnings("rawtypes")
     public DefaultRedisScript<List> rateLimitScript() {
-        DefaultRedisScript<List> script = new DefaultRedisScript<>();
-        script.setLocation(new ClassPathResource("lua/rate_limit.lua"));
+        DefaultRedisScript<List> script = new DefaultRedisScript<>(loadLuaScript("lua/rate_limit.lua"));
         script.setResultType(List.class);
         return script;
+    }
+
+    /**
+     * Loads a Lua script eagerly from the classpath so Redis {@code EVALSHA -> EVAL}
+     * fallback never performs blocking resource I/O on a reactive execution path.
+     *
+     * @param path classpath location of the Lua script
+     * @return script source loaded as UTF-8
+     * @throws IllegalStateException if the script cannot be loaded
+     */
+    private String loadLuaScript(String path) {
+        try {
+            return new ClassPathResource(path)
+                    .getContentAsString(StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to load Lua script: " + path, e);
+        }
     }
 }

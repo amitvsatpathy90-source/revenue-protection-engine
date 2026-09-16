@@ -1,9 +1,13 @@
+# VT pinning trace is JVM-arg only:
+# -Djdk.tracePinnedThreads=full (no Spring property)
+
 rpe:
   dev:
     blockhound:
       enabled: true        # 5-10% instrumentation overhead — dev only
-    reactor-debug-agent: true    # significant overhead — dev only
-    # VT pinning trace is JVM-arg only: -Djdk.tracePinnedThreads=full (no Spring property)
+    reactor-debug-agent: true  # significant overhead — dev only
 
-  # <--- CRITICAL: Spring Boot disables raw env/config properties in /info by default for security
-
+# Dev-only: expose Resilience4j CB state transitions and failure causes.
+logging:
+  level:
+    io.github.resilience4j.circuitbreaker: DEBUG

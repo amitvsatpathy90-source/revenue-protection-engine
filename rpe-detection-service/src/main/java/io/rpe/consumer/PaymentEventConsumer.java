@@ -158,6 +158,7 @@ public class PaymentEventConsumer implements ConsumerSeekAware {
      */
     @KafkaListener(
             id           = "payment-consumer",
+            groupId = "rpe-payment-consumer",
             topics       = "payment.events",
             containerFactory = "paymentListenerContainerFactory"
     )
