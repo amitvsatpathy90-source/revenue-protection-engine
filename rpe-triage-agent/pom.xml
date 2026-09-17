@@ -198,6 +198,18 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- ══════ DB CONSTRAINT TEST — real Postgres for schema-level invariant checks ══════ -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- ArchUnit: cross-service import + silent-failure guards (ADR-17 §7 Stage 4) -->
         <dependency>
             <groupId>com.tngtech.archunit</groupId>
