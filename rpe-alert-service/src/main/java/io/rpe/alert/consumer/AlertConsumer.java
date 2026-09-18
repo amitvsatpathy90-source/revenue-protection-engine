@@ -19,7 +19,7 @@ import java.time.Duration;
 /**
  * Alert consumer for {@code payment.alerts}.
  *
- * Idempotent actioning via {@code processed_alerts ON CONFLICT DO NOTHING}:
+ * Idempotent actioning via {@code processed_alerts ON CONFLICT (alert_id) DO NOTHING}:
  * the same {@code alert_id} is always safe to receive twice — the second insert is a no-op.
  * {@code alert_id} is a deterministic UUIDv5, so replay produces the same id (ADR-13).
  *
@@ -76,7 +76,7 @@ public class AlertConsumer {
                 .subscribeOn(jdbcScheduler)
                 .block(Duration.ofSeconds(30));
 
-        // inserted == 0 → ON CONFLICT DO NOTHING absorbed a replayed alert_id (expected
+        // inserted == 0 → ON CONFLICT (alert_id) DO NOTHING absorbed a replayed alert_id (expected
         // under ADR-13 replay semantics; bounded tag set: rule names only)
         meterRegistry.counter("rpe.alerts.actioned",
                         "rule_type", alert.ruleName() == null ? "unknown" : alert.ruleName(),
@@ -89,7 +89,7 @@ public class AlertConsumer {
     private int insertProcessedAlert(AlertMessage alert) throws Exception {
         String sql =
                 "INSERT INTO processed_alerts(alert_id, account_id, rule_name, produced_at) "
-              + "VALUES (?::uuid, ?, ?, ?) ON CONFLICT DO NOTHING";
+              + "VALUES (?::uuid, ?, ?, ?) ON CONFLICT (alert_id) DO NOTHING";
 
         try (Connection conn = dataSource.getConnection();
              var ps = conn.prepareStatement(sql)) {

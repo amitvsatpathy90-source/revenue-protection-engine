@@ -34,7 +34,7 @@ import java.util.concurrent.TimeUnit;
  *
  * <b>Failure semantics — never a silent drop:</b>
  * <ul>
- *   <li>A failed flush re-queues the whole batch (idempotent: {@code ON CONFLICT DO
+ *   <li>A failed flush re-queues the whole batch (idempotent: {@code ON CONFLICT (id) DO
  *       NOTHING} on deterministic alert_id makes a partial-batch re-insert safe).
  *       Postgres recovers → the queue drains.
  *   <li>The queue is bounded ({@value #DEFAULT_QUEUE_CAPACITY}). When full — sustained Postgres
@@ -118,7 +118,7 @@ public class OutboxBatchWriter implements SmartLifecycle {
      * hot path produced is already enqueued. Stops the periodic flusher, then drives a final
      * drain-flush of the whole queue against a bounded deadline.
      *
-     * No-progress guard: a failed flush re-queues its batch (idempotent {@code ON CONFLICT}),
+     * No-progress guard: a failed flush re-queues its batch (idempotent {@code ON CONFLICT (id) DO NOTHING}),
      * so under a Postgres outage the queue size stays flat — we detect that and break early
      * rather than busy-spinning to the deadline. Anything still queued at exit is the existing
      * ADR-12 loss window (table intact; bounded), now reported via
@@ -319,7 +319,7 @@ public class OutboxBatchWriter implements SmartLifecycle {
         if (batch.isEmpty()) return;
 
         String sql = "INSERT INTO outbox(id, account_id, payload, status, attempts, traceparent, tracestate) "
-                   + "VALUES (?::uuid, ?, ?::jsonb, 'PENDING', 0, ?, ?) ON CONFLICT DO NOTHING";
+                   + "VALUES (?::uuid, ?, ?::jsonb, 'PENDING', 0, ?, ?) ON CONFLICT (id) DO NOTHING";
 
         try (Connection conn = dataSource.getConnection()) {
             conn.setAutoCommit(false);
@@ -352,7 +352,7 @@ public class OutboxBatchWriter implements SmartLifecycle {
             // the relay re-queries the outbox on every poll regardless.
         } catch (Exception e) {
             meterRegistry.counter("rpe.outbox.flush.failure").increment(batch.size());
-            // Re-queue for the next flush cycle — deterministic alert_id + ON CONFLICT
+            // Re-queue for the next flush cycle — deterministic alert_id + ON CONFLICT (id)
             // DO NOTHING make re-inserting a partially-committed batch idempotent.
             int requeued = 0;
             for (AlertIntent intent : batch) {

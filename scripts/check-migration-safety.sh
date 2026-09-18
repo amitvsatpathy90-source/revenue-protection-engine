@@ -52,6 +52,8 @@ fi
 declare -A PATTERNS=(
   ["DROP[[:space:]]+COLUMN"]="DROP COLUMN"
   ["DROP[[:space:]]+TABLE"]="DROP TABLE"
+  ["DROP[[:space:]]+CONSTRAINT"]="DROP CONSTRAINT"
+  ["DROP[[:space:]]+INDEX"]="DROP INDEX"
   ["RENAME[[:space:]]+(COLUMN|TO)"]="RENAME"
   ["ALTER[[:space:]]+COLUMN[[:space:]]+[^ ]+[[:space:]]+SET[[:space:]]+NOT[[:space:]]+NULL"]="SET NOT NULL on existing column"
 )
