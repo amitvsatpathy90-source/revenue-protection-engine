@@ -43,7 +43,7 @@ public class JdbcTriageInbox implements TriageInbox {
     public boolean tryInsert(UUID alertId, String accountId, String ruleName) {
         return onJdbcPool(() -> {
             String sql = "INSERT INTO triaged_alerts(alert_id, account_id, rule_name) "
-                       + "VALUES (?::uuid, ?, ?) ON CONFLICT DO NOTHING";
+                       + "VALUES (?::uuid, ?, ?) ON CONFLICT (alert_id) DO NOTHING";
             try (Connection conn = dataSource.getConnection();
                  var ps = conn.prepareStatement(sql)) {
                 ps.setQueryTimeout(10);
