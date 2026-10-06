@@ -81,7 +81,7 @@ public class SchedulerConfig {
      * Saturation policy for {@link #jdbcScheduler()}: park the submitter until a queue slot frees;
      * NEVER execute the task on it.
      *
-     * <p>Supersedes {@code CallerRunsPolicy} (arch-audit). CallerRuns *executed* the rejected task on
+     * <p>Supersedes {@code CallerRunsPolicy}. CallerRuns *executed* the rejected task on
      * the calling thread — which on the outbox hot path is a lane virtual thread — so under exactly
      * the Postgres backpressure the policy exists to absorb, PgJDBC's {@code synchronized} internals
      * pinned a VT carrier. That inverted the JDBC-on-dedicated-platform-pool constraint precisely when
@@ -94,6 +94,13 @@ public class SchedulerConfig {
      * no pool thread submits back into this pool, so parking cannot self-deadlock. That precondition
      * is guarded below rather than assumed — a future self-submit fails loudly instead of wedging the
      * pool in silence.
+     *
+     *
+     * <p>VT pinning: the park is {@code ArrayBlockingQueue.offer(timeout)} (ReentrantLock + Condition):
+     * a parked VT unmounts, its carrier stays free. No {@code synchronized} in RPE code on this path.
+     * JDBC-bearing work submitted to {@code jdbcScheduler} runs on {@code rpe-jdbc-} platform threads;
+     * the outbox batch flush runs on its dedicated {@code rpe-outbox-flush} thread. JDK 21;
+     * JEP 491 lifts monitor pinning in 24+.
      */
     private static final class BoundedBlockingJdbcSubmitPolicy implements RejectedExecutionHandler {
 
