@@ -155,4 +155,22 @@ class SchedulerConfigJdbcPolicyTest {
         assertThat(done.await(3, TimeUnit.SECONDS)).isTrue();
         assertThat(err.get()).isInstanceOf(RejectedExecutionException.class);
     }
+
+    @Test
+    void parksPastManySlicesWithoutDeadline() throws Exception {
+        saturate();
+        var err = new AtomicReference<Throwable>();
+        var returned = new CountDownLatch(1);
+        Thread s = Thread.ofVirtual().start(() -> {
+            try {
+                jdbc.schedule(() -> { });
+                returned.countDown();
+            } catch (Throwable t) {
+                err.set(t);
+            }
+        });
+        assertThat(returned.await(5_500, TimeUnit.MILLISECONDS)).isFalse(); // >10 slices
+        assertThat(err.get()).isNull();    // not rejected
+        assertThat(s.isAlive()).isTrue();  // still waiting, no flaky state check
+    }
 }
