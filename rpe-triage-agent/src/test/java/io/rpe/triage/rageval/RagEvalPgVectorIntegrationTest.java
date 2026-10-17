@@ -43,6 +43,9 @@ class RagEvalPgVectorIntegrationTest {
     /** Embedding model used only by the evaluation harness. */
     private static final String OLLAMA_MODEL = "mxbai-embed-large";
 
+    /** Standard MMR default; 0.5 weighs relevance and diversity equally. */
+    private static final double MMR_LAMBDA = 0.5;
+
     /**
      * Same PostgreSQL + pgvector image build as the deployment stack.
      *
@@ -171,22 +174,25 @@ class RagEvalPgVectorIntegrationTest {
 
         try {
             /*
-             * Run the retrieval/selection baseline:
+             * Run both selectors against the same corpus/embeddings/candidates so the
+             * MMR trade-off can be read directly against the TopK baseline:
              *
-             *   literal rule name
-             *       -> embedding
-             *       -> pgvector candidate retrieval
-             *       -> retrieval purity
-             *       -> Top-K selection
-             *       -> evaluation metrics
-             *
-             * MMR is intentionally not part of this baseline.
+             *   literal rule name -> embedding -> pgvector candidate retrieval
+             *       -> retrieval purity -> selection -> evaluation metrics
              */
+            System.out.println("=== TopK baseline ===");
             new RagEvalHarness().run(
                     corpus,
                     embeddings,
                     new OfflineCandidateRetriever(jdbc),
                     new TopKSelector());
+
+            System.out.println("=== MMR (lambda=" + MMR_LAMBDA + ") ===");
+            new RagEvalHarness().run(
+                    corpus,
+                    embeddings,
+                    new OfflineCandidateRetriever(jdbc),
+                    new MMRSelector(embeddings, MMR_LAMBDA));
         } finally {
             /*
              * Persist newly generated embeddings even when the harness itself fails.
