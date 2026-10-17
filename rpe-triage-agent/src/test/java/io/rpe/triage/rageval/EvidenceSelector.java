@@ -28,9 +28,6 @@ record ScoredChunk(
 
 /**
  * Similarity-only baseline: returns the highest-scoring candidates.
- *
- * <p>Example: similarities {@code [0.91, 0.87, 0.84, 0.79]} with {@code finalK=2}
- * returns the chunks scoring {@code 0.91} and {@code 0.87}.
  */
 final class TopKSelector implements EvidenceSelector {
 
@@ -39,7 +36,6 @@ final class TopKSelector implements EvidenceSelector {
             List<ScoredChunk> candidates,
             int finalK) {
 
-        // Rank candidates by query similarity, highest score first, then keep the top K.
         return candidates.stream()
                 .sorted(Comparator.comparingDouble(ScoredChunk::similarity).reversed())
                 .limit(finalK)
@@ -52,13 +48,11 @@ final class TopKSelector implements EvidenceSelector {
  * Maximal Marginal Relevance: greedily picks the candidate maximizing
  * {@code lambda * relevance - (1 - lambda) * maxSimilarityToAlreadySelected}.
  *
- * <p>lambda=1.0 degenerates to {@link TopKSelector}; lambda=0.0 ignores query
- * relevance entirely and only maximizes diversity. Targets the redundancy
- * baseline measured by TopKSelector (0.50 on velocity/geo, 0.00 on zscore).
+ * <p>{@code lambda=1.0} degenerates to {@link TopKSelector}; {@code lambda=0.0} ignores
+ * query relevance entirely and only maximizes diversity.
  *
- * <p>Reuses {@link CachedEmbeddingClient} for pairwise chunk similarity — every
- * candidate's embedding is already cached from corpus insertion, so this adds
- * no new Ollama calls.
+ * <p>Reuses {@link CachedEmbeddingClient} for pairwise chunk similarity. The cache is populated
+ * during corpus insertion, so this adds no new Ollama calls after corpus embeddings are cached.
  */
 final class MMRSelector implements EvidenceSelector {
 
@@ -78,20 +72,18 @@ final class MMRSelector implements EvidenceSelector {
         var remaining = new ArrayList<>(candidates);
         var selected = new ArrayList<ScoredChunk>();
 
-        // Greedy: each round picks the candidate with the best relevance/diversity trade-off.
         while (!remaining.isEmpty() && selected.size() < finalK) {
             ScoredChunk best = null;
             double bestScore = Double.NEGATIVE_INFINITY;
 
             for (var candidate : remaining) {
-
-                // Diversity penalty: how similar is this candidate to what's already picked.
                 double maxSimToSelected = selected.stream()
                         .mapToDouble(s -> cosineSimilarity(candidate.chunk(), s.chunk()))
                         .max()
                         .orElse(0.0);
 
-                double mmrScore = lambda * candidate.similarity() - (1 - lambda) * maxSimToSelected;
+                double mmrScore = lambda * candidate.similarity()
+                        - (1 - lambda) * maxSimToSelected;
 
                 if (mmrScore > bestScore) {
                     bestScore = mmrScore;
@@ -110,12 +102,21 @@ final class MMRSelector implements EvidenceSelector {
         float[] va = embeddings.embed(a.content());
         float[] vb = embeddings.embed(b.content());
 
-        double dot = 0, normA = 0, normB = 0;
+        if (va.length != vb.length) {
+            throw new IllegalArgumentException("Embedding dimensions do not match");
+        }
+
+        double dot = 0.0;
+        double normA = 0.0;
+        double normB = 0.0;
+
         for (int i = 0; i < va.length; i++) {
             dot += va[i] * vb[i];
             normA += va[i] * va[i];
             normB += vb[i] * vb[i];
         }
-        return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+
+        double denominator = Math.sqrt(normA) * Math.sqrt(normB);
+        return denominator == 0.0 ? 0.0 : dot / denominator;
     }
 }
