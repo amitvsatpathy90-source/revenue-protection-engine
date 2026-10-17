@@ -73,7 +73,7 @@ final class SyntheticCorpusGenerator {
                             variants(
                                     rng -> "Rolling-mean deviation for " + acct(rng) + ": transaction amount "
                                             + amt(rng) + " differs by " + sigma(rng) + " standard deviations.",
-                                    rng -> "A rolling-mean z-score flagged " + acct(rng) + " because amount "
+                                    rng -> "A rolling-mean deviation z-score flagged " + acct(rng) + " because amount "
                                             + amt(rng) + " is several standard deviations from its recent average."),
                             variants(
                                     rng -> "Daily-spend z-score anomaly for " + acct(rng) + ": total spend "
@@ -88,7 +88,7 @@ final class SyntheticCorpusGenerator {
                             variants(
                                     rng -> "Below-baseline z-score for " + acct(rng) + ": amount "
                                             + amt(rng) + " is " + sigma(rng) + " standard deviations below the rolling mean.",
-                                    rng -> "Negative z-score deviation for " + acct(rng) + ": transaction amount "
+                                    rng -> "Below-baseline z-score anomaly for " + acct(rng) + ": transaction amount "
                                             + amt(rng) + " is far below its normal range."),
                             variants(
                                     rng -> "Repeated-amount anomaly for " + acct(rng) + ": several transactions of "
