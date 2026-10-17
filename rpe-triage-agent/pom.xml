@@ -218,6 +218,13 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- ══════ RAG EVALUATION TEST — Ollama generates cached evaluation embeddings ══════ -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-ollama</artifactId>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
     <build>
