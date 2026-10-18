@@ -6,8 +6,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.ai.ollama.OllamaEmbeddingModel;
 import org.springframework.ai.ollama.api.OllamaApi;
 import org.springframework.ai.ollama.api.OllamaEmbeddingOptions;
+import org.springframework.http.client.ReactorClientHttpRequestFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.web.client.RestClient;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.images.builder.ImageFromDockerfile;
@@ -17,6 +19,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 
 /**
@@ -137,8 +140,20 @@ class RagEvalPgVectorIntegrationTest {
          * The endpoint comes from configuration so the same test can target local Ollama or
          * a remote Ollama endpoint without changing source code.
          */
+        /*
+         * Spring Framework's Reactor-backed request factory defaults to a 10-second read
+         * timeout. CPU-only Ollama cold-start/inference can exceed that (the local logs
+         * recorded a successful embedding request taking over 12 seconds).
+         *
+         * This override is test-scoped and gives the evaluation endpoint up to two minutes
+         * to return one embedding; it does not alter production HTTP clients.
+         */
+        var requestFactory = new ReactorClientHttpRequestFactory();
+        requestFactory.setReadTimeout(Duration.ofMinutes(2));
+
         var ollamaApi = OllamaApi.builder()
                 .baseUrl(baseUrl)
+                .restClientBuilder(RestClient.builder().requestFactory(requestFactory))
                 .build();
 
         var embeddingModel = OllamaEmbeddingModel.builder()
@@ -162,17 +177,19 @@ class RagEvalPgVectorIntegrationTest {
 
         var corpus = new SyntheticCorpusGenerator().generate();
 
-        /*
-         * Generate and persist one embedding for every synthetic corpus chunk.
-         *
-         * The corpus is 300 chunks:
-         *   100 per rule (95 clustered + 5 distractor) × 3 rules = 300.
-         *
-         * CachedEmbeddingClient means only uncached chunks result in Ollama calls.
-         */
-        insertCorpus(corpus, embeddings);
-
         try {
+            /*
+             * Generate and persist one embedding for every synthetic corpus chunk.
+             *
+             * The corpus is 300 chunks:
+             *   100 per rule (95 clustered + 5 distractor) × 3 rules = 300.
+             *
+             * CachedEmbeddingClient means only uncached chunks result in Ollama calls.
+             * Keep insertion inside this try so partial cache progress is flushed if an
+             * embedding request fails partway through the corpus.
+             */
+            insertCorpus(corpus, embeddings);
+
             /*
              * Run both selectors against the same corpus/embeddings/candidates so the
              * MMR trade-off can be read directly against the TopK baseline:
