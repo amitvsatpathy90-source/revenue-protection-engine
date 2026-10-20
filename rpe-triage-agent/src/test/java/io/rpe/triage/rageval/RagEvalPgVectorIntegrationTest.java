@@ -20,40 +20,41 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 /**
- * PostgreSQL + pgvector integration harness for the offline RAG evaluation.
+ * PostgreSQL + pgvector integration test for the offline RAG benchmark.
  *
- * <p>The container is built from the same {@code deploy/postgres/Dockerfile} used by the
- * deployment stack so the pgvector/PostgreSQL image build stays aligned with the RPE runtime.
+ * <p>Uses the repository's PostgreSQL Docker build and a separate evaluation
+ * table. The 1,024-dimensional vectors match the evaluation-only Ollama model,
+ * not the production OpenAI embedding model.</p>
  *
- * <p>The evaluation schema is separate from the production schema. The
- * {@code vector(1024)} dimension matches the evaluation embedding model used by the benchmark,
- * not the production OpenAI embedding dimension.
+ * <p>Compares TopK with multiple MMR lambda values. Each query's candidate
+ * pool is retrieved once and shared across selectors, isolating the impact
+ * of the selection strategy.</p>
  */
 @Testcontainers(disabledWithoutDocker = true)
 class RagEvalPgVectorIntegrationTest {
 
-    /*
-     * Build from the same deploy/postgres directory used by the production Docker image.
-     *
-     * The directory contains the Dockerfile that pins PostgreSQL/pgvector versions.
-     */
+    // Build context for the same PostgreSQL/pgvector image used by the project.
     private static final Path POSTGRES_BUILD_CONTEXT =
             Path.of("../deploy/postgres").toAbsolutePath().normalize();
 
-    /** Embedding model used only by the evaluation harness. */
+    // Evaluation-only embedding model; its output has 1,024 dimensions.
     private static final String OLLAMA_MODEL = "mxbai-embed-large";
 
-    /** Standard MMR default; 0.5 weighs relevance and diversity equally. */
-    private static final double MMR_LAMBDA = 0.5;
+    /*
+     * MMR lambda controls the relevance/diversity trade-off:
+     * 0.5 = equal weighting; higher values favor query relevance;
+     * 1.0 = similarity-only ranking, equivalent to the TopK baseline.
+     */
+    private static final List<Double> MMR_LAMBDAS =
+            List.of(0.5, 0.6, 0.7, 0.8, 0.9, 1.0);
 
     /**
-     * Same PostgreSQL + pgvector image build as the deployment stack.
-     *
-     * <p>JIT is disabled here because that is also how the canonical deployment starts
-     * PostgreSQL.
+     * Isolated evaluation database, built from the project's PostgreSQL Dockerfile.
+     * JIT is disabled to match the project's canonical database startup.
      */
     @Container
     static final GenericContainer<?> POSTGRES = new GenericContainer<>(
@@ -70,10 +71,7 @@ class RagEvalPgVectorIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        /*
-         * Testcontainers maps container port 5432 to a host port dynamically.
-         * Always use the mapped host/port rather than assuming localhost:5432.
-         */
+        // Use Testcontainers' dynamically mapped port, not a fixed localhost port.
         String jdbcUrl = "jdbc:postgresql://"
                 + POSTGRES.getHost()
                 + ":"
@@ -87,15 +85,10 @@ class RagEvalPgVectorIntegrationTest {
 
         jdbc = new JdbcTemplate(dataSource);
 
-        // pgvector provides PostgreSQL's `vector` type and cosine-distance operators.
+        // Enable pgvector's vector type and cosine-distance operations.
         jdbc.execute("CREATE EXTENSION IF NOT EXISTS vector");
 
-        /*
-         * Evaluation-only table.
-         *
-         * 1024 dimensions match mxbai-embed-large.
-         * This is intentionally not the production RAG vector dimension.
-         */
+        // Evaluation-only schema; do not write to the production RAG table.
         jdbc.execute("""
                 CREATE TABLE rag_eval_corpus (
                     id TEXT PRIMARY KEY,
@@ -106,10 +99,7 @@ class RagEvalPgVectorIntegrationTest {
                     embedding vector(1024) NOT NULL)
                 """);
 
-        /*
-         * Match the evaluation retrieval strategy:
-         * cosine distance over an HNSW pgvector index.
-         */
+        // Match the benchmark's cosine-distance retrieval strategy.
         jdbc.execute("""
                 CREATE INDEX ON rag_eval_corpus
                 USING hnsw (embedding vector_cosine_ops)
@@ -118,6 +108,7 @@ class RagEvalPgVectorIntegrationTest {
 
     @Test
     void runHarness() throws Exception {
+        // Allow local or remote Ollama configuration without editing the test.
         String baseUrl = System.getProperty(
                 "ollama.base-url",
                 System.getenv().getOrDefault(
@@ -125,35 +116,25 @@ class RagEvalPgVectorIntegrationTest {
                         "http://localhost:11434"));
 
         /*
-         * This is an optional evaluation test, not a normal build gate.
-         *
-         * No Ollama means there is no RAG measurement to produce, so skip the test instead
-         * of failing the suite.
+         * This is an opt-in integration benchmark, not a regular build gate.
+         * Skip it when Ollama is unreachable because no embedding measurements
+         * can be produced. A skipped test is not a successful benchmark run.
          */
         Assumptions.assumeTrue(
                 ollamaReachable(baseUrl),
                 "Ollama not reachable at " + baseUrl + " — skipping eval harness");
 
         /*
-         * Construct the evaluation embedding client directly.
-         *
-         * The endpoint comes from configuration so the same test can target local Ollama or
-         * a remote Ollama endpoint without changing source code.
-         */
-        /*
-         * Spring Framework's Reactor-backed request factory defaults to a 10-second read
-         * timeout. CPU-only Ollama cold-start/inference can exceed that (the local logs
-         * recorded a successful embedding request taking over 12 seconds).
-         *
-         * This override is test-scoped and gives the evaluation endpoint up to two minutes
-         * to return one embedding; it does not alter production HTTP clients.
+         * Increase the test-scoped HTTP read timeout for slow model startup
+         * or CPU-bound inference. This does not change production HTTP settings.
          */
         var requestFactory = new ReactorClientHttpRequestFactory();
         requestFactory.setReadTimeout(Duration.ofMinutes(2));
 
         var ollamaApi = OllamaApi.builder()
                 .baseUrl(baseUrl)
-                .restClientBuilder(RestClient.builder().requestFactory(requestFactory))
+                .restClientBuilder(
+                        RestClient.builder().requestFactory(requestFactory))
                 .build();
 
         var embeddingModel = OllamaEmbeddingModel.builder()
@@ -164,11 +145,9 @@ class RagEvalPgVectorIntegrationTest {
                 .build();
 
         /*
-         * Cache embeddings under target/ so repeated benchmark runs do not repeatedly call
-         * Ollama for the same corpus/query text.
-         *
-         * The cache key also includes the model identity inside CachedEmbeddingClient, preventing
-         * vectors from different embedding models being mixed.
+         * Reuse vectors between benchmark runs using the local JSON cache.
+         * The cache key includes the model identifier and text, so different
+         * configured model identifiers do not intentionally share embeddings.
          */
         var embeddings = new CachedEmbeddingClient(
                 embeddingModel,
@@ -179,53 +158,57 @@ class RagEvalPgVectorIntegrationTest {
 
         try {
             /*
-             * Generate and persist one embedding for every synthetic corpus chunk.
+             * Embed and insert the synthetic corpus into pgvector.
+             * Expected data: 300 chunks — 100 per rule, including five
+             * grade-zero distractors for each rule.
              *
-             * The corpus is 300 chunks:
-             *   100 per rule (95 clustered + 5 distractor) × 3 rules = 300.
-             *
-             * CachedEmbeddingClient means only uncached chunks result in Ollama calls.
-             * Keep insertion inside this try so partial cache progress is flushed if an
-             * embedding request fails partway through the corpus.
+             * Repeated text/model combinations use CachedEmbeddingClient's cache.
              */
             insertCorpus(corpus, embeddings);
 
             /*
-             * Run both selectors against the same corpus/embeddings/candidates so the
-             * MMR trade-off can be read directly against the TopK baseline:
-             *
-             *   literal rule name -> embedding -> pgvector candidate retrieval
-             *       -> retrieval purity -> selection -> evaluation metrics
+             * Register selectors in the order we want to compare them.
+             * LinkedHashMap preserves output order: TopK first, then each MMR lambda.
              */
-            System.out.println("=== TopK baseline ===");
-            new RagEvalHarness().run(
-                    corpus,
-                    embeddings,
-                    new OfflineCandidateRetriever(jdbc),
-                    new TopKSelector());
+            var selectors = new LinkedHashMap<String, EvidenceSelector>();
 
-            System.out.println("=== MMR (lambda=" + MMR_LAMBDA + ") ===");
+            // Similarity-only baseline.
+            selectors.put("TopK", new TopKSelector());
+
+            // Sweep lambda to see how relevance/diversity changes with the weighting.
+            for (double lambda : MMR_LAMBDAS) {
+                selectors.put(
+                        "MMR(" + lambda + ")",
+                        new MMRSelector(embeddings, lambda));
+            }
+
+            System.out.println("=== Rule-scoped candidates: TopK vs MMR ===");
+
+            /*
+             * The harness retrieves candidates once per query, then passes the
+             * same scored pool to TopK and every MMR selector. This avoids comparing
+             * algorithms on different retrieval results.
+             */
             new RagEvalHarness().run(
                     corpus,
                     embeddings,
                     new OfflineCandidateRetriever(jdbc),
-                    new MMRSelector(embeddings, MMR_LAMBDA));
+                    selectors);
+
         } finally {
             /*
-             * Persist newly generated embeddings even when the harness itself fails.
-             *
-             * Without this finally block, a failed evaluation run would discard the cache and
-             * force the next run to regenerate every uncached embedding.
+             * Persist the embedding cache even if insertion or evaluation fails,
+             * allowing the next run to reuse work already completed.
              */
             embeddings.flush();
         }
     }
 
     /**
-     * Embeds every corpus chunk and inserts the resulting vector into pgvector.
+     * Embeds each synthetic chunk and stores its text, evaluation labels and vector.
      *
-     * <p>Evaluation ground-truth fields are stored alongside the text, but they are not used
-     * to generate or retrieve the embeddings.
+     * <p>Relevance grades and cluster IDs are persisted as evaluation ground truth.
+     * They must not be used to filter candidates before the selector runs.</p>
      */
     private void insertCorpus(
             List<CorpusChunk> corpus,
@@ -253,9 +236,7 @@ class RagEvalPgVectorIntegrationTest {
     }
 
     /**
-     * Converts a Java embedding array to PostgreSQL's pgvector literal format.
-     *
-     * <p>Example: {@code [0.1f, 0.2f, 0.3f]} becomes {@code "[0.1,0.2,0.3]"}.
+     * Converts a Java float array into pgvector's bracketed vector literal format.
      */
     private static String toVectorLiteral(float[] vector) {
         var sb = new StringBuilder("[");
@@ -269,11 +250,10 @@ class RagEvalPgVectorIntegrationTest {
     }
 
     /**
-     * Checks whether the configured Ollama endpoint is available before starting the benchmark.
+     * Checks whether the Ollama HTTP endpoint is reachable.
      *
-     * <p>The lightweight {@code /api/tags} request verifies that the HTTP endpoint is reachable.
-     * It does not verify that the requested embedding model has already been pulled; a missing
-     * model will surface when the embedding is first requested.
+     * <p>This does not verify that the configured embedding model is installed;
+     * a missing model will fail when the first embedding is requested.</p>
      */
     private boolean ollamaReachable(String baseUrl) {
         try {
@@ -290,6 +270,4 @@ class RagEvalPgVectorIntegrationTest {
             return false;
         }
     }
-
-
 }

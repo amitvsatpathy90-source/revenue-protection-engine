@@ -10,56 +10,90 @@ import java.util.*;
  */
 final class RetrievalMetrics {
 
-    static double precisionAtK(List<CorpusChunk> selected, int k) {
+    static double precisionAtK(
+            List<CorpusChunk> selected,
+            int k,
+            String queryRuleName) {
+
         return selected.stream()
                 .limit(k)
-                .filter(c -> c.relevanceGrade() > 0)
+                .filter(c -> relevanceGradeForQuery(c, queryRuleName) > 0)
                 .count() / (double) k;
     }
 
     static double recallAtK(
             List<CorpusChunk> selected,
             long totalRelevantInCorpus,
-            int k) {
+            int k,
+            String queryRuleName) {
 
         if (totalRelevantInCorpus == 0) return 0.0;
 
-        var hit = selected.stream()
+        long hits = selected.stream()
                 .limit(k)
-                .filter(c -> c.relevanceGrade() > 0)
+                .filter(c -> relevanceGradeForQuery(c, queryRuleName) > 0)
                 .count();
 
-        return hit / (double) totalRelevantInCorpus;
+        return hits / (double) totalRelevantInCorpus;
     }
 
-    static double mrr(List<CorpusChunk> ranked) {
+    static double mrr(
+            List<CorpusChunk> ranked,
+            String queryRuleName) {
+
         for (int i = 0; i < ranked.size(); i++) {
-            if (ranked.get(i).relevanceGrade() > 0) {
+            if (relevanceGradeForQuery(ranked.get(i), queryRuleName) > 0) {
                 return 1.0 / (i + 1);
             }
         }
+
         return 0.0;
     }
 
-    static double ndcgAtK(List<CorpusChunk> ranked, int k) {
-        double dcg = 0;
-        double idcg = 0;
+    static double ndcgAtK(
+            List<CorpusChunk> ranked,
+            List<CorpusChunk> candidatePool,
+            String queryRuleName,
+            int k) {
 
-        var byGrade = ranked.stream()
-                .sorted(Comparator.comparingInt(CorpusChunk::relevanceGrade).reversed())
+        double dcg = dcgAtK(ranked, queryRuleName, k);
+
+        var idealRanking = candidatePool.stream()
+                .sorted(Comparator.comparingInt(
+                                (CorpusChunk c) ->
+                                        relevanceGradeForQuery(c, queryRuleName))
+                        .reversed())
                 .toList();
 
+        double idcg = dcgAtK(idealRanking, queryRuleName, k);
+
+        return idcg == 0.0 ? 0.0 : dcg / idcg;
+    }
+
+    private static double dcgAtK(
+            List<CorpusChunk> ranked,
+            String queryRuleName,
+            int k) {
+
+        double dcg = 0.0;
+
         for (int i = 0; i < Math.min(k, ranked.size()); i++) {
-            dcg += (Math.pow(2, ranked.get(i).relevanceGrade()) - 1)
+            int grade = relevanceGradeForQuery(ranked.get(i), queryRuleName);
+
+            dcg += (Math.pow(2, grade) - 1)
                     / (Math.log(i + 2) / Math.log(2));
         }
 
-        for (int i = 0; i < Math.min(k, byGrade.size()); i++) {
-            idcg += (Math.pow(2, byGrade.get(i).relevanceGrade()) - 1)
-                    / (Math.log(i + 2) / Math.log(2));
-        }
+        return dcg;
+    }
 
-        return idcg == 0 ? 0.0 : dcg / idcg;
+    private static int relevanceGradeForQuery(
+            CorpusChunk chunk,
+            String queryRuleName) {
+
+        return chunk.ruleName().equals(queryRuleName)
+                ? chunk.relevanceGrade()
+                : 0;
     }
 
     /**
