@@ -1,32 +1,25 @@
 package io.rpe.triage.rageval;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
  * Report-only harness for evaluating RAG retrieval and evidence selection.
  *
- * <p>Retrieval is performed once per query. Each selector receives the same
- * candidate pool, so differences in the final metrics reflect the selection
- * strategy rather than differences in retrieval.</p>
- *
- * <p>Relevance grades and cluster IDs are evaluation ground truth. They are
- * used to score results only; they must never be used to filter candidates
- * before selection.</p>
- *
- * <p>The harness reports metrics without enforcing quality thresholds.
- * Regression gates should be added once the evaluation baseline is trusted.</p>
+ * <p>Each selector receives the same candidate pool for a given query and K.
+ * Evaluation labels are used for diagnostics and scoring only, never for
+ * candidate filtering or selector decisions.</p>
  */
 final class RagEvalHarness {
 
-    // Representative queries corresponding to RPE's three detection rules.
     private static final List<String> QUERIES =
             List.of("velocity", "zscore", "geo");
 
-    // Retrieve this many candidates before comparing selection strategies.
-    private static final int CANDIDATE_K = 20;
+    // Expand the same rule-scoped pool to test candidate-pool starvation.
+    private static final List<Integer> CANDIDATE_KS =
+            List.of(20, 40, 60);
 
-    // Evaluate the final evidence set of at most five chunks.
     private static final int FINAL_K = 5;
 
     void run(
@@ -36,120 +29,184 @@ final class RagEvalHarness {
             Map<String, EvidenceSelector> selectors) {
 
         for (String rule : QUERIES) {
-
-            // Embed the rule query and retrieve candidates exactly once.
-            // All selectors below will reuse this same scored candidate pool.
+            // Reuse the same query vector for every candidate-pool size.
             float[] queryVector = embeddings.embed(rule);
 
-            // Test rule-scoped retrieval while retaining all grade-zero distractors.
-            var candidates = retriever.retrieveCandidatesForRule(
-                    queryVector, rule, CANDIDATE_K);
-
-            // Extract chunks for metrics that need to inspect the full candidate pool.
-            // Keep grade-0 distractors and cross-rule results: the benchmark must measure
-            // how the retrieval and selection strategies handle them.
-            List<CorpusChunk> candidateChunks = candidates.stream()
-                    .map(ScoredChunk::chunk)
-                    .toList();
-
-            // Retrieval purity: fraction of candidates whose rule matches the query.
-            // This measures rule matching, not the relevance of every individual chunk.
-            double purity =
-                    RetrievalMetrics.retrievalPurity(candidateChunks, rule);
-
-            // Candidate grade-zero rate: fraction labelled irrelevant by the
-            // synthetic evaluation data. Report it; do not use it to filter candidates.
-            double gradeZeroRate = candidateChunks.isEmpty()
-                    ? 0.0
-                    : candidateChunks.stream()
-                    .filter(c -> c.relevanceGrade() == 0)
-                    .count() / (double) candidateChunks.size();
-
-            // Recall denominator: all positive-grade chunks for this rule in the corpus.
-            // These labels are used only for evaluation, never by a selector.
-            long totalRelevant = corpus.stream()
+            long ruleCorpusSize = corpus.stream()
                     .filter(c -> c.ruleName().equals(rule))
-                    .filter(c -> c.relevanceGrade() > 0)
                     .count();
 
-            // Compare every selector on the same candidates for this query.
-            for (var entry : selectors.entrySet()) {
+            for (int candidateK : CANDIDATE_KS) {
+                var candidates = retriever.retrieveCandidatesForRule(
+                        queryVector, rule, candidateK);
 
-                String selectorName = entry.getKey();
-                EvidenceSelector selector = entry.getValue();
+                int expectedSize = (int) Math.min(
+                        candidateK, ruleCorpusSize);
 
-                // Select up to FINAL_K chunks. The selector receives no ground-truth
-                // filtering; it uses retrieval scores and, for MMR, embedding similarity.
-                var selected = selector.select(candidates, FINAL_K);
+                // Prevent an incomplete pool from being mistaken for a full K.
+                if (candidates.size() != expectedSize) {
+                    throw new IllegalStateException(
+                            "Unexpected candidate count for rule=" + rule
+                                    + ", K=" + candidateK
+                                    + ": expected=" + expectedSize
+                                    + ", actual=" + candidates.size());
+                }
 
-                // Precision@K: fraction of the final K judged relevant to this query.
-                double precision =
-                        RetrievalMetrics.precisionAtK(selected, FINAL_K, rule);
+                reportCandidatePool(rule, candidateK, candidates);
 
-                // Recall@K: fraction of all relevant corpus chunks recovered in the final K.
-                double recall = RetrievalMetrics.recallAtK(
-                        selected, totalRelevant, FINAL_K, rule);
+                // All selectors below receive exactly this same pool.
+                for (var entry : selectors.entrySet()) {
+                    String selectorName = entry.getKey();
+                    EvidenceSelector selector = entry.getValue();
 
-                // MRR: reciprocal rank of the first query-relevant selected chunk.
-                double mrr = RetrievalMetrics.mrr(selected, rule);
+                    var selected = selector.select(candidates, FINAL_K);
 
-                // nDCG@K: ranking quality compared with an ideal ordering of the
-                // retrieved candidate pool, using query-specific relevance grades.
-                double ndcg = RetrievalMetrics.ndcgAtK(
-                        selected, candidateChunks, rule, FINAL_K);
+                    // Ground truth is inspected only after selection.
+                    long positiveCount = selected.stream()
+                            .filter(c -> c.ruleName().equals(rule))
+                            .filter(c -> c.relevanceGrade() > 0)
+                            .count();
 
-                // Fraction of selected chunks labelled grade 0.
-                // A rise means the selector is choosing more known benign distractors.
-                double selectedGradeZeroRate = selected.isEmpty()
-                        ? 0.0
-                        : selected.stream()
-                        .limit(FINAL_K)
-                        .filter(c -> c.relevanceGrade() == 0)
-                        .count() / (double) selected.size();
+                    long distinctPositiveClusters = selected.stream()
+                            .filter(c -> c.ruleName().equals(rule))
+                            .filter(c -> c.relevanceGrade() > 0)
+                            .map(CorpusChunk::clusterId)
+                            .distinct()
+                            .count();
 
-                // Cluster redundancy: repeated cluster selections relative to set size.
-                // Lower values generally mean more cluster-level diversity.
-                double clusterRedundancy =
-                        RetrievalMetrics.redundancyRatio(selected);
+                    double selectedGradeZeroRate = selected.isEmpty()
+                            ? 0.0
+                            : selected.stream()
+                            .filter(c -> c.relevanceGrade() == 0)
+                            .count() / (double) selected.size();
 
-                // Mean cosine similarity across selected chunks.
-                // Lower values generally mean the selected embeddings are less similar.
-                double pairwiseCosine =
-                        RetrievalMetrics.meanPairwiseCosineSimilarity(
-                                selected, embeddings);
+                    double meanPairwiseCosine =
+                            RetrievalMetrics.meanPairwiseCosineSimilarity(
+                                    selected, embeddings);
 
-                // Print cluster IDs so we can inspect which themes were selected.
-                List<String> selectedClusters = selected.stream()
-                        .map(CorpusChunk::clusterId)
-                        .toList();
+                    List<String> selectedClusters = selected.stream()
+                            .map(CorpusChunk::clusterId)
+                            .toList();
 
-                // Report-only output: compare relevance and diversity together.
-                System.out.printf(
-                        "query=%-9s selector=%-12s "
-                                + "purity@%d=%.2f grade0@%d=%.2f "
-                                + "P@%d=%.2f R@%d=%.2f MRR=%.2f "
-                                + "nDCG@%d=%.2f selectedGrade0@%d=%.2f "
-                                + "clusterRedundancy=%.2f meanPairwiseCos=%.3f "
-                                + "selectedClusters=%s%n",
-                        rule,
-                        selectorName,
-                        CANDIDATE_K,
-                        purity,
-                        CANDIDATE_K,
-                        gradeZeroRate,
-                        FINAL_K,
-                        precision,
-                        FINAL_K,
-                        recall,
-                        mrr,
-                        FINAL_K,
-                        ndcg,
-                        FINAL_K,
-                        selectedGradeZeroRate,
-                        clusterRedundancy,
-                        pairwiseCosine,
-                        selectedClusters);
+                    System.out.printf(
+                            Locale.ROOT,
+                            "result K=%d query=%-9s selector=%-26s "
+                                    + "selected=%d/%d positives@5=%d "
+                                    + "distinctPositiveClusters@5=%d "
+                                    + "selectedGrade0=%.2f "
+                                    + "meanPairwiseCos=%.3f "
+                                    + "selectedClusters=%s%n",
+                            candidateK,
+                            rule,
+                            selectorName,
+                            selected.size(),
+                            FINAL_K,
+                            positiveCount,
+                            distinctPositiveClusters,
+                            selectedGradeZeroRate,
+                            meanPairwiseCosine,
+                            selectedClusters);
+                }
             }
         }
+    }
+
+    /**
+     * Dumps the actual candidate ranking and summarizes score separation.
+     * Relevance grades appear in diagnostic output only.
+     */
+    private static void reportCandidatePool(
+            String rule,
+            int candidateK,
+            List<ScoredChunk> candidates) {
+
+        System.out.printf(
+                Locale.ROOT,
+                "%n=== Candidate pool query=%s K=%d rows=%d ===%n",
+                rule,
+                candidateK,
+                candidates.size());
+
+        for (int i = 0; i < candidates.size(); i++) {
+            ScoredChunk candidate = candidates.get(i);
+            CorpusChunk chunk = candidate.chunk();
+
+            System.out.printf(
+                    Locale.ROOT,
+                    "pool query=%-9s K=%d rank=%02d id=%s "
+                            + "sim=%.6f cluster=%s grade=%d%n",
+                    rule,
+                    candidateK,
+                    i + 1,
+                    chunk.id(),
+                    candidate.similarity(),
+                    chunk.clusterId(),
+                    chunk.relevanceGrade());
+        }
+
+        List<ScoredChunk> positives = candidates.stream()
+                .filter(c -> c.chunk().ruleName().equals(rule))
+                .filter(c -> c.chunk().relevanceGrade() > 0)
+                .toList();
+
+        List<ScoredChunk> gradeZero = candidates.stream()
+                .filter(c -> c.chunk().ruleName().equals(rule))
+                .filter(c -> c.chunk().relevanceGrade() == 0)
+                .toList();
+
+        double gradeZeroRate = candidates.isEmpty()
+                ? 0.0
+                : gradeZero.size() / (double) candidates.size();
+
+        String gap = "n/a";
+
+        if (!positives.isEmpty() && !gradeZero.isEmpty()) {
+            double minPositive = positives.stream()
+                    .mapToDouble(ScoredChunk::similarity)
+                    .min()
+                    .orElseThrow();
+
+            double maxGradeZero = gradeZero.stream()
+                    .mapToDouble(ScoredChunk::similarity)
+                    .max()
+                    .orElseThrow();
+
+            gap = String.format(
+                    Locale.ROOT,
+                    "%.6f",
+                    minPositive - maxGradeZero);
+        }
+
+        System.out.printf(
+                Locale.ROOT,
+                "poolSummary query=%-9s K=%d positive=%d grade0=%d "
+                        + "positiveRange=%s grade0Range=%s "
+                        + "minPositiveMinusMaxGrade0=%s grade0Rate=%.2f%n",
+                rule,
+                candidateK,
+                positives.size(),
+                gradeZero.size(),
+                similarityRange(positives),
+                similarityRange(gradeZero),
+                gap,
+                gradeZeroRate);
+    }
+
+    private static String similarityRange(List<ScoredChunk> candidates) {
+        if (candidates.isEmpty()) {
+            return "n/a";
+        }
+
+        double min = candidates.stream()
+                .mapToDouble(ScoredChunk::similarity)
+                .min()
+                .orElseThrow();
+
+        double max = candidates.stream()
+                .mapToDouble(ScoredChunk::similarity)
+                .max()
+                .orElseThrow();
+
+        return String.format(Locale.ROOT, "[%.6f,%.6f]", min, max);
     }
 }
