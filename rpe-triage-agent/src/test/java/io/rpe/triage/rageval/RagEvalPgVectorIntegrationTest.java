@@ -52,6 +52,9 @@ class RagEvalPgVectorIntegrationTest {
     private static final List<Double> MMR_LAMBDAS =
             List.of(0.5, 0.6, 0.7, 0.8, 0.9, 1.0);
 
+    // Initial experimental cutoff, to be assessed against the observed cosine distribution.
+    private static final double DEDUP_COSINE_THRESHOLD = 0.90;
+
     /**
      * Isolated evaluation database, built from the project's PostgreSQL Dockerfile.
      * JIT is disabled to match the project's canonical database startup.
@@ -175,6 +178,13 @@ class RagEvalPgVectorIntegrationTest {
             // Similarity-only baseline.
             selectors.put("TopK", new TopKSelector());
 
+            // Query-similarity-first baseline with near-duplicate suppression.
+            selectors.put(
+                    "TopK+dedup(0.90)",
+                    new TopKDedupSelector(
+                            embeddings,
+                            DEDUP_COSINE_THRESHOLD));
+
             // Sweep lambda to see how relevance/diversity changes with the weighting.
             for (double lambda : MMR_LAMBDAS) {
                 selectors.put(
@@ -182,7 +192,8 @@ class RagEvalPgVectorIntegrationTest {
                         new MMRSelector(embeddings, lambda));
             }
 
-            System.out.println("=== Rule-scoped candidates: TopK vs MMR ===");
+            System.out.println(
+                    "=== Rule-scoped candidates: TopK vs TopK+dedup vs MMR ===");
 
             /*
              * The harness retrieves candidates once per query, then passes the

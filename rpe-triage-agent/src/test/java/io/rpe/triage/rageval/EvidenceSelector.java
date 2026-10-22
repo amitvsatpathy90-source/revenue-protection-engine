@@ -45,6 +45,96 @@ final class TopKSelector implements EvidenceSelector {
 }
 
 /**
+ * Greedy query-similarity baseline with a near-duplicate cutoff.
+ *
+ * <p>Only query similarity and embedding cosine similarity influence selection.
+ * Relevance grades and cluster labels are never read.</p>
+ */
+final class TopKDedupSelector implements EvidenceSelector {
+
+    private final CachedEmbeddingClient embeddings;
+    private final double similarityThreshold;
+
+    TopKDedupSelector(
+            CachedEmbeddingClient embeddings,
+            double similarityThreshold) {
+
+        if (!Double.isFinite(similarityThreshold)
+                || similarityThreshold < -1.0
+                || similarityThreshold > 1.0) {
+            throw new IllegalArgumentException(
+                    "Cosine similarity threshold must be in [-1, 1]");
+        }
+
+        this.embeddings = embeddings;
+        this.similarityThreshold = similarityThreshold;
+    }
+
+    @Override
+    public List<CorpusChunk> select(
+            List<ScoredChunk> candidates,
+            int finalK) {
+
+        if (finalK <= 0 || candidates.isEmpty()) {
+            return List.of();
+        }
+
+        var ranked = candidates.stream()
+                .sorted(Comparator.comparingDouble(
+                        ScoredChunk::similarity).reversed())
+                .toList();
+
+        var selected = new ArrayList<ScoredChunk>();
+
+        for (var candidate : ranked) {
+            boolean nearDuplicate = selected.stream()
+                    .anyMatch(existing ->
+                            cosineSimilarity(
+                                    candidate.chunk(),
+                                    existing.chunk())
+                                    >= similarityThreshold);
+
+            if (!nearDuplicate) {
+                selected.add(candidate);
+            }
+
+            if (selected.size() >= finalK) {
+                break;
+            }
+        }
+
+        // Returning fewer than finalK is intentional when the cutoff
+        // excludes the remaining candidates.
+        return selected.stream()
+                .map(ScoredChunk::chunk)
+                .toList();
+    }
+
+    private double cosineSimilarity(CorpusChunk a, CorpusChunk b) {
+        float[] va = embeddings.embed(a.content());
+        float[] vb = embeddings.embed(b.content());
+
+        if (va.length != vb.length) {
+            throw new IllegalArgumentException(
+                    "Embedding dimensions do not match");
+        }
+
+        double dot = 0.0;
+        double normA = 0.0;
+        double normB = 0.0;
+
+        for (int i = 0; i < va.length; i++) {
+            dot += va[i] * vb[i];
+            normA += va[i] * va[i];
+            normB += vb[i] * vb[i];
+        }
+
+        double denominator = Math.sqrt(normA) * Math.sqrt(normB);
+        return denominator == 0.0 ? 0.0 : dot / denominator;
+    }
+}
+
+/**
  * Maximal Marginal Relevance: greedily picks the candidate maximizing
  * {@code lambda * relevance - (1 - lambda) * maxSimilarityToAlreadySelected}.
  *
