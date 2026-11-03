@@ -210,3 +210,33 @@ final class MMRSelector implements EvidenceSelector {
         return denominator == 0.0 ? 0.0 : dot / denominator;
     }
 }
+
+/**
+ * Admissibility floor: drops candidates far below the best score, then delegates.
+ */
+final class RelativeFloorSelector implements EvidenceSelector {
+
+    private final double delta;
+    private final EvidenceSelector inner;
+
+    RelativeFloorSelector(double delta, EvidenceSelector inner) {
+        if (!Double.isFinite(delta) || delta < 0.0) {
+            throw new IllegalArgumentException("delta must be >= 0");
+        }
+        this.delta = delta;
+        this.inner = inner;
+    }
+
+    @Override
+    public List<CorpusChunk> select(List<ScoredChunk> candidates, int finalK) {
+        if (finalK <= 0 || candidates.isEmpty()) {
+            return List.of();
+        }
+        double top = candidates.stream()
+                .mapToDouble(ScoredChunk::similarity).max().getAsDouble();
+        var admitted = candidates.stream()
+                .filter(c -> c.similarity() >= top - delta)   // label-free floor
+                .toList();
+        return inner.select(admitted, finalK);
+    }
+}

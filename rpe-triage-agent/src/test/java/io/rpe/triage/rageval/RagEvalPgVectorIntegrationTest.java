@@ -198,6 +198,14 @@ class RagEvalPgVectorIntegrationTest {
                             embeddings,
                             DEDUP_COSINE_THRESHOLD));
 
+            for (double delta : new double[] {0.02, 0.05, 0.10}) {
+                selectors.put("Floor(" + delta + ")",
+                        new RelativeFloorSelector(delta, new TopKSelector()));
+                selectors.put("Floor(" + delta + ")+dedup(0.90)",
+                        new RelativeFloorSelector(delta,
+                                new TopKDedupSelector(embeddings, DEDUP_COSINE_THRESHOLD)));
+            }
+
             // Sweep lambda to see how relevance/diversity changes with the weighting.
             for (double lambda : MMR_LAMBDAS) {
                 selectors.put(
