@@ -1,11 +1,12 @@
 package io.rpe.triage.rageval;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
 /**
- * Report-only harness for evaluating RAG retrieval and evidence selection.
+ * Eval harness that returns scorecards for evaluating RAG retrieval and evidence selection.
  *
  * <p>Each selector receives the same candidate pool for a given query and K.
  * Evaluation labels are used for diagnostics and scoring only, never for
@@ -20,16 +21,34 @@ final class RagEvalHarness {
     private static final List<Integer> CANDIDATE_KS =
             List.of(20, 40, 60);
 
-    private static final int FINAL_K = 5;
+    // Unscoped pool size: no rule filter, cross-rule chunks compete.
+    private static final List<Integer> PARITY_KS = List.of(20, 40);
 
-    void run(
+    record Scorecard(
+            String pool,
+            int candidateK,
+            String rule,
+            String selector,
+            double precision,
+            double ndcg,
+            double gradeZeroRate,
+            double subtopicRecall,
+            double redundancy,
+            double meanPairwiseCos,
+            List<CorpusChunk> selected,
+            List<CorpusChunk> candidatePool) {}
+
+    static final int FINAL_K = 5;
+
+    List<Scorecard> run(
             List<CorpusChunk> corpus,
             CachedEmbeddingClient embeddings,
             OfflineCandidateRetriever retriever,
             Map<String, EvidenceSelector> selectors) {
 
+        var scorecards = new ArrayList<Scorecard>();
+
         for (String rule : QUERIES) {
-            // Reuse the same query vector for every candidate-pool size.
             float[] queryVector = embeddings.embed(rule);
 
             long ruleCorpusSize = corpus.stream()
@@ -43,7 +62,7 @@ final class RagEvalHarness {
                 int expectedSize = (int) Math.min(
                         candidateK, ruleCorpusSize);
 
-                // Prevent an incomplete pool from being mistaken for a full K.
+                // Incomplete pool must not pass as a full K.
                 if (candidates.size() != expectedSize) {
                     throw new IllegalStateException(
                             "Unexpected candidate count for rule=" + rule
@@ -54,61 +73,92 @@ final class RagEvalHarness {
 
                 reportCandidatePool(rule, candidateK, candidates);
 
-                // All selectors below receive exactly this same pool.
-                for (var entry : selectors.entrySet()) {
-                    String selectorName = entry.getKey();
-                    EvidenceSelector selector = entry.getValue();
+                scorecards.addAll(evaluatePool(
+                        "scoped", rule, candidateK, candidates,
+                        embeddings, selectors));
+            }
 
-                    var selected = selector.select(candidates, FINAL_K);
+            // Prod-shaped parity: no rule filter.
+            for (int parityK : PARITY_KS) {
+                var unscoped = retriever.retrieveCandidates(
+                        queryVector, parityK);
 
-                    // Ground truth is inspected only after selection.
-                    long positiveCount = selected.stream()
-                            .filter(c -> c.ruleName().equals(rule))
-                            .filter(c -> c.relevanceGrade() > 0)
-                            .count();
+                int expectedUnscoped = Math.min(parityK, corpus.size());
 
-                    long distinctPositiveClusters = selected.stream()
-                            .filter(c -> c.ruleName().equals(rule))
-                            .filter(c -> c.relevanceGrade() > 0)
-                            .map(CorpusChunk::clusterId)
-                            .distinct()
-                            .count();
-
-                    double selectedGradeZeroRate = selected.isEmpty()
-                            ? 0.0
-                            : selected.stream()
-                            .filter(c -> c.relevanceGrade() == 0)
-                            .count() / (double) selected.size();
-
-                    double meanPairwiseCosine =
-                            RetrievalMetrics.meanPairwiseCosineSimilarity(
-                                    selected, embeddings);
-
-                    List<String> selectedClusters = selected.stream()
-                            .map(CorpusChunk::clusterId)
-                            .toList();
-
-                    System.out.printf(
-                            Locale.ROOT,
-                            "result K=%d query=%-9s selector=%-26s "
-                                    + "selected=%d/%d positives@5=%d "
-                                    + "distinctPositiveClusters@5=%d "
-                                    + "selectedGrade0=%.2f "
-                                    + "meanPairwiseCos=%.3f "
-                                    + "selectedClusters=%s%n",
-                            candidateK,
-                            rule,
-                            selectorName,
-                            selected.size(),
-                            FINAL_K,
-                            positiveCount,
-                            distinctPositiveClusters,
-                            selectedGradeZeroRate,
-                            meanPairwiseCosine,
-                            selectedClusters);
+                if (unscoped.size() != expectedUnscoped) {
+                    throw new IllegalStateException(
+                            "Unexpected unscoped candidate count for rule="
+                                    + rule + ", K=" + parityK
+                                    + ": expected=" + expectedUnscoped
+                                    + ", actual=" + unscoped.size());
                 }
+
+                scorecards.addAll(evaluatePool(
+                        "unscoped", rule, parityK, unscoped,
+                        embeddings, selectors));
             }
         }
+
+        return scorecards;
+    }
+
+    private static List<Scorecard> evaluatePool(
+            String poolMode,
+            String rule,
+            int candidateK,
+            List<ScoredChunk> candidates,
+            CachedEmbeddingClient embeddings,
+            Map<String, EvidenceSelector> selectors) {
+
+        var pool = candidates.stream().map(ScoredChunk::chunk).toList();
+        var rows = new ArrayList<Scorecard>();
+
+        // All selectors receive exactly this same pool.
+        for (var entry : selectors.entrySet()) {
+            var selected = entry.getValue().select(candidates, FINAL_K);
+
+            // Ground truth is inspected only after selection.
+            var row = new Scorecard(
+                    poolMode,
+                    candidateK,
+                    rule,
+                    entry.getKey(),
+                    RetrievalMetrics.precisionAtK(selected, FINAL_K, rule),
+                    RetrievalMetrics.ndcgAtK(selected, pool, rule, FINAL_K),
+                    RetrievalMetrics.gradeZeroRate(selected, rule),
+                    RetrievalMetrics.subtopicRecall(
+                            selected, pool, rule, FINAL_K),
+                    RetrievalMetrics.redundancyRatio(selected),
+                    RetrievalMetrics.meanPairwiseCosineSimilarity(
+                            selected, embeddings),
+                    selected,
+                    pool);
+
+            rows.add(row);
+
+            System.out.printf(
+                    Locale.ROOT,
+                    "scorecard pool=%-8s K=%d query=%-9s selector=%-26s "
+                            + "n=%d/%d P@5=%.2f nDCG@5=%.2f grade0=%.2f "
+                            + "subtopicRecall=%.2f posClusters=%d redundancy=%.2f "
+                            + "cos=%.3f clusters=%s%n",
+                    poolMode,
+                    candidateK,
+                    rule,
+                    entry.getKey(),
+                    selected.size(),
+                    FINAL_K,
+                    row.precision(),
+                    row.ndcg(),
+                    row.gradeZeroRate(),
+                    row.subtopicRecall(),
+                    RetrievalMetrics.distinctPositiveClusters(row.selected(), rule),
+                    row.redundancy(),
+                    row.meanPairwiseCos(),
+                    selected.stream().map(CorpusChunk::clusterId).toList());
+        }
+
+        return rows;
     }
 
     /**

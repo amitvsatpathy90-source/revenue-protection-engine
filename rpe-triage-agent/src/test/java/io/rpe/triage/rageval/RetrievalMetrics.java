@@ -169,4 +169,43 @@ final class RetrievalMetrics {
                 .filter(c -> c.ruleName().equals(queryRuleName))
                 .count() / (double) candidates.size();
     }
+
+    // Share of selected chunks with grade 0 for this query
+    static double gradeZeroRate(
+            List<CorpusChunk> selected,
+            String queryRuleName) {
+
+        if (selected.isEmpty()) return 0.0;
+
+        return selected.stream()
+                .filter(c -> relevanceGradeForQuery(c, queryRuleName) == 0)
+                .count() / (double) selected.size();
+    }
+
+    // Selected distinct positive clusters / achievable positive clusters in the pool, capped at k.
+    static double subtopicRecall(
+            List<CorpusChunk> selected,
+            List<CorpusChunk> candidatePool,
+            String queryRuleName,
+            int k) {
+
+        long achievable = Math.min(
+                k, distinctPositiveClusters(candidatePool, queryRuleName));
+
+        if (achievable == 0) return 0.0;
+
+        return distinctPositiveClusters(selected, queryRuleName)
+                / (double) achievable;
+    }
+
+    static long distinctPositiveClusters(
+            List<CorpusChunk> chunks,
+            String queryRuleName) {
+
+        return chunks.stream()
+                .filter(c -> relevanceGradeForQuery(c, queryRuleName) > 0)
+                .map(CorpusChunk::clusterId)
+                .distinct()
+                .count();
+    }
 }

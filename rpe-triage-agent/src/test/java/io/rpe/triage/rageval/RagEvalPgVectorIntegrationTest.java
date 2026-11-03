@@ -20,8 +20,16 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * PostgreSQL + pgvector integration test for the offline RAG benchmark.
@@ -54,6 +62,11 @@ class RagEvalPgVectorIntegrationTest {
 
     // Initial experimental cutoff, to be assessed against the observed cosine distribution.
     private static final double DEDUP_COSINE_THRESHOLD = 0.90;
+
+    // Proposed soft-gate thresholds; report-only until agreed.
+    private static final double GATE_MIN_PRECISION = 0.80;
+    private static final double GATE_MAX_GRADE_ZERO = 0.20;
+    private static final double GATE_MIN_SUBTOPIC_RECALL = 0.50;
 
     /**
      * Isolated evaluation database, built from the project's PostgreSQL Dockerfile.
@@ -193,18 +206,22 @@ class RagEvalPgVectorIntegrationTest {
             }
 
             System.out.println(
-                    "=== Rule-scoped candidates: TopK vs TopK+dedup vs MMR ===");
+                    "=== Scoped pools + unscoped parity: "
+                            + "TopK vs TopK+dedup vs MMR ===");
 
-            /*
-             * The harness retrieves candidates once per query, then passes the
-             * same scored pool to TopK and every MMR selector. This avoids comparing
-             * algorithms on different retrieval results.
-             */
-            new RagEvalHarness().run(
-                    corpus,
-                    embeddings,
-                    new OfflineCandidateRetriever(jdbc),
-                    selectors);
+            var harness = new RagEvalHarness();
+            var retriever = new OfflineCandidateRetriever(jdbc);
+
+            var first = harness.run(corpus, embeddings, retriever, selectors);
+
+            assertInvariants(first);
+            reportGates(first);
+
+            // Second pass over the same data must match exactly.
+            var second = harness.run(corpus, embeddings, retriever, selectors);
+
+            assertEquals(first, second,
+                    "scorecards differ between two in-JVM passes");
 
         } finally {
             /*
@@ -280,5 +297,79 @@ class RagEvalPgVectorIntegrationTest {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    // Hard invariants: any violation is a selector or harness bug.
+    private static void assertInvariants(
+            List<RagEvalHarness.Scorecard> cards) {
+
+        var idsByCell = new HashMap<String, Map<String, List<String>>>();
+
+        for (var c : cards) {
+            var selectedIds = c.selected().stream()
+                    .map(CorpusChunk::id)
+                    .toList();
+            var poolIds = c.candidatePool().stream()
+                    .map(CorpusChunk::id)
+                    .collect(Collectors.toSet());
+            String where = c.pool() + " K=" + c.candidateK()
+                    + " " + c.rule() + " " + c.selector();
+
+            assertTrue(selectedIds.size() <= RagEvalHarness.FINAL_K,
+                    "over finalK: " + where);
+            assertEquals(selectedIds.size(), new HashSet<>(selectedIds).size(),
+                    "duplicate chunk selected: " + where);
+            assertTrue(poolIds.containsAll(selectedIds),
+                    "selected chunk not in pool: " + where);
+
+            idsByCell
+                    .computeIfAbsent(
+                            c.pool() + "|" + c.candidateK() + "|" + c.rule(),
+                            k -> new HashMap<>())
+                    .put(c.selector(), selectedIds);
+        }
+
+        // MMR(1.0) is similarity-only and must reproduce TopK exactly.
+        idsByCell.forEach((cell, bySelector) -> assertEquals(
+                bySelector.get("TopK"),
+                bySelector.get("MMR(1.0)"),
+                "MMR(1.0) differs from TopK at " + cell));
+    }
+
+    // Soft gates: printed per row and per selector, never fail the build.
+    private static void reportGates(List<RagEvalHarness.Scorecard> cards) {
+        var passBySelector = new LinkedHashMap<String, Integer>();
+        var totalBySelector = new LinkedHashMap<String, Integer>();
+
+        for (var c : cards) {
+            boolean relevance = c.precision() >= GATE_MIN_PRECISION;
+            boolean exposure = c.gradeZeroRate() <= GATE_MAX_GRADE_ZERO;
+            boolean diversity =
+                    c.subtopicRecall() >= GATE_MIN_SUBTOPIC_RECALL;
+
+            System.out.printf(
+                    Locale.ROOT,
+                    "gate pool=%-8s K=%d query=%-9s selector=%-26s "
+                            + "relevance=%s exposure=%s diversity=%s%n",
+                    c.pool(),
+                    c.candidateK(),
+                    c.rule(),
+                    c.selector(),
+                    relevance ? "PASS" : "FAIL",
+                    exposure ? "PASS" : "FAIL",
+                    diversity ? "PASS" : "FAIL");
+
+            totalBySelector.merge(c.selector(), 1, Integer::sum);
+            if (relevance && exposure && diversity) {
+                passBySelector.merge(c.selector(), 1, Integer::sum);
+            }
+        }
+
+        totalBySelector.forEach((selector, total) -> System.out.printf(
+                Locale.ROOT,
+                "gateSummary selector=%-26s allPass=%d/%d%n",
+                selector,
+                passBySelector.getOrDefault(selector, 0),
+                total));
     }
 }
