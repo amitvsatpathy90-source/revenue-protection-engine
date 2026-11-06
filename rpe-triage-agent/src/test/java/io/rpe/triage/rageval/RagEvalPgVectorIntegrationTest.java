@@ -3,6 +3,7 @@ package io.rpe.triage.rageval;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.ai.ollama.OllamaEmbeddingModel;
 import org.springframework.ai.ollama.api.OllamaApi;
 import org.springframework.ai.ollama.api.OllamaEmbeddingOptions;
@@ -43,6 +44,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * of the selection strategy.</p>
  */
 @Testcontainers(disabledWithoutDocker = true)
+@EnabledIf("ollamaUp")
 class RagEvalPgVectorIntegrationTest {
 
     // Build context for the same PostgreSQL/pgvector image used by the project.
@@ -285,21 +287,27 @@ class RagEvalPgVectorIntegrationTest {
         return sb.append("]").toString();
     }
 
+    static boolean ollamaUp() {
+        String baseUrl = System.getProperty("ollama.base-url",
+                System.getenv().getOrDefault("OLLAMA_BASE_URL", "http://localhost:11434"));
+        return ollamaReachable(baseUrl);
+    }
+
     /**
      * Checks whether the Ollama HTTP endpoint is reachable.
      *
      * <p>This does not verify that the configured embedding model is installed;
      * a missing model will fail when the first embedding is requested.</p>
      */
-    private boolean ollamaReachable(String baseUrl) {
+    private static boolean ollamaReachable(String baseUrl) {
         try {
             var conn = (HttpURLConnection) URI.create(
                             baseUrl + "/api/tags")
                     .toURL()
                     .openConnection();
 
-            conn.setConnectTimeout(500);
-            conn.setReadTimeout(500);
+            conn.setConnectTimeout(2000);
+            conn.setReadTimeout(2000);
 
             return conn.getResponseCode() == 200;
         } catch (Exception e) {
