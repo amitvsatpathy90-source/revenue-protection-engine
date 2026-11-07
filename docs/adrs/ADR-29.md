@@ -32,8 +32,8 @@ kept separate from the gate's `redis` CB so one boundary's trouble can't open th
 
 RPE uses Resilience4j across all four services for multiple, architecturally distinct boundaries: the
 Redis gate circuit breaker + bulkhead (detection), the distributed rate-limiter circuit breaker +
-bulkhead (detection, `ADR-24`, deliberately separate from the gate's breaker), the Postgres bulkhead
-(detection), and the full LLM boundary stack — TimeLimiter, CircuitBreaker, Bulkhead, RateLimiter,
+bulkhead (detection, `ADR-24`, deliberately separate from the gate's breaker), the Postgres bulkhead (detection), and
+the full LLM boundary stack — TimeLimiter, CircuitBreaker, Bulkhead, RateLimiter,
 Retry (triage, `ADR-15`). These boundaries have materially different failure signatures: a Redis blip
 recovers in milliseconds and should trip on a tight sliding window (detection's `redis` instance:
 `slidingWindowSize: 10`, `waitDurationInOpenState: 10s`), while an LLM call's slow-call profile needs
@@ -72,6 +72,7 @@ overrides a shared baseline.
 ## Consequences
 
 **Positive:**
+
 - No instance can silently inherit another's threshold — every circuit breaker/bulkhead/limiter's
   configuration is visible in one place and fully self-describing.
 - Adding a new boundary forces an explicit decision (sliding window, failure threshold, wait
@@ -80,6 +81,7 @@ overrides a shared baseline.
   in the repo today, so there is nothing to accidentally inherit from even by mistake.
 
 **Negative:**
+
 - More verbose configuration — every instance fully specified, no compression via a shared baseline;
   detection's `resilience4j` block alone runs to roughly 35 lines for 5 instances.
 - No structural (ArchUnit or CI) enforcement that a future PR can't introduce a
@@ -119,6 +121,6 @@ leak between architecturally unrelated boundaries) is what would actually be exp
 
 ## Changelog
 
-| Date | Version | Author | Change |
-|---|---|---|---|
-| 2026-07-15 | 1.0.0 | amit | Initial — ACCEPTED. Backfills a convention enforced since ADR-01; verified via repo-wide grep (zero `configs:`/`base-config:` blocks) and inspection of `LlmResilienceConfig.java` (`.custom()` throughout), preventing silent configuration coupling across boundaries. |
+| Date       | Version | Author | Change                                                                                                                                                                                                                                                                   |
+|------------|---------|--------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-07-15 | 1.0.0   | amit   | Initial — ACCEPTED. Backfills a convention enforced since ADR-01; verified via repo-wide grep (zero `configs:`/`base-config:` blocks) and inspection of `LlmResilienceConfig.java` (`.custom()` throughout), preventing silent configuration coupling across boundaries. |

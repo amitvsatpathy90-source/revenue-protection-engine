@@ -8,7 +8,7 @@ last_updated: 2026-06-29
 status: ACCEPTED
 reversal_cost: LOW
 owner: amit
-tags: [rate-limiting, redis, lua, token-bucket, resilience, observability, adr-03-follow-on]
+tags: [ rate-limiting, redis, lua, token-bucket, resilience, observability, adr-03-follow-on ]
 ---
 
 # ADR-24 — Distributed rate limiting: global atomic Lua token bucket, degrade-to-local on Redis outage
@@ -47,6 +47,7 @@ contract (`RateLimiterService.tryAcquire(accountId) → boolean`, called inside 
 — `PaymentEventConsumer` is untouched. Enforcement detail in `ADR-24.md`.
 
 **1. Token bucket, NOT fixed-window `INCR`+`EXPIRE`** (deviating from ADR-03's casual suggestion):
+
 - A fixed window has the **boundary-burst exploit** — 2× the limit across a window edge — the exact
   flaw this codebase already rejects for the velocity detector (the atomic Lua gate rules: "Sliding window, NOT
   fixed. Fixed window has a boundary exploit"). Using it for rate limiting would be internally
@@ -78,13 +79,13 @@ gate's `redis` instances so a rate-limit hiccup cannot open the gate CB and need
 events). When the `ratelimit` CB is open or Redis errors/times out, `tryAcquire` falls back to the
 per-instance Guava limiter (the pre-ADR-24 behaviour) for the remaining budget:
 
-| Redis state | Limiter behaviour | Global effect |
-|---|---|---|
-| healthy | distributed token bucket | global `rate/s` (the fix) |
+| Redis state    | Limiter behaviour             | Global effect                       |
+|----------------|-------------------------------|-------------------------------------|
+| healthy        | distributed token bucket      | global `rate/s` (the fix)           |
 | down / CB open | per-instance Guava (degraded) | `N × rate/s`, bounded, self-healing |
 
 Failing **closed** (deny on Redis error) would drop unrepeatable events — exactly what ADR-03
-forbids. Fail-**open-unlimited** removes all protection. Degrade-to-local keeps today's bound as the
+forbids. Fail- **open-unlimited** removes all protection. Degrade-to-local keeps today's bound as the
 floor; the Guava code is not deleted — it *becomes* the resilience floor (mirrors triage's
 `DEGRADED_RULE_BASED`). `rpe.ratelimit.degraded` is the alert signal that the distributed limiter is
 unavailable; CB-open short-circuits with no Redis round-trip (fast-fail, no per-event timeout).
@@ -99,15 +100,15 @@ CB, never a config toggle (the reactive pipeline rules — RPE has no feature fl
 
 ## Alternatives Considered
 
-| Option | Decision | Reason |
-|---|---|---|
-| Fixed-window `INCR`+`EXPIRE` (ADR-03's suggestion) | Rejected | Boundary-burst exploit (2× at the window edge) — the flaw the velocity detector already rejects. Token bucket is the consistent, drop-in-equivalent primitive. |
-| Sliding-window log (ZSET of timestamps) | Rejected | Stores 500–2000 members/account/sec — unbounded memory at production rates; the bucket is O(1) state. |
-| Fold rate-limit into `gate.lua` | Rejected | Rate-limit must run *before* state mutation (a throttled/breached event must not touch velocity/Welford/geo); folding it in inverts that and disturbs the frozen ADR-14 contract. |
-| Fail-closed on Redis error | Rejected | Drops unrepeatable payment events on a Redis blip — exactly what ADR-03's throttle-not-drop forbids. |
-| Fail-open-unlimited on Redis error | Rejected | Removes all rate protection during an outage. Degrade-to-local keeps today's per-instance bound as a floor. |
-| Share the gate's `redis` CB | Rejected | Conflates a rate-limit hiccup with detection-core health; a rate-limit failure could open the gate CB and buffer events for a non-detection reason. Separate `ratelimit` CB. |
-| Distribute the triage LLM `RateLimiter` too | Rejected (out of scope) | That limiter is a per-instance *billing breaker* (ADR-15) — a deliberate, separate decision. Making it global adds a Redis dependency to a triage path that has none. Noted, not changed. |
+| Option                                             | Decision                | Reason                                                                                                                                                                                    |
+|----------------------------------------------------|-------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Fixed-window `INCR`+`EXPIRE` (ADR-03's suggestion) | Rejected                | Boundary-burst exploit (2× at the window edge) — the flaw the velocity detector already rejects. Token bucket is the consistent, drop-in-equivalent primitive.                            |
+| Sliding-window log (ZSET of timestamps)            | Rejected                | Stores 500–2000 members/account/sec — unbounded memory at production rates; the bucket is O(1) state.                                                                                     |
+| Fold rate-limit into `gate.lua`                    | Rejected                | Rate-limit must run *before* state mutation (a throttled/breached event must not touch velocity/Welford/geo); folding it in inverts that and disturbs the frozen ADR-14 contract.         |
+| Fail-closed on Redis error                         | Rejected                | Drops unrepeatable payment events on a Redis blip — exactly what ADR-03's throttle-not-drop forbids.                                                                                      |
+| Fail-open-unlimited on Redis error                 | Rejected                | Removes all rate protection during an outage. Degrade-to-local keeps today's per-instance bound as a floor.                                                                               |
+| Share the gate's `redis` CB                        | Rejected                | Conflates a rate-limit hiccup with detection-core health; a rate-limit failure could open the gate CB and buffer events for a non-detection reason. Separate `ratelimit` CB.              |
+| Distribute the triage LLM `RateLimiter` too        | Rejected (out of scope) | That limiter is a per-instance *billing breaker* (ADR-15) — a deliberate, separate decision. Making it global adds a Redis dependency to a triage path that has none. Noted, not changed. |
 
 ## Consequences
 
@@ -117,14 +118,14 @@ drop-in (call site unchanged), preserves throttle-not-drop, and adds no new fail
 drop an event: a Redis outage degrades to the pre-existing per-instance floor rather than failing.
 Fully observable (`rpe.ratelimit.decision{outcome,mode}`, `rpe.ratelimit.wait` timer,
 `rpe.ratelimit.degraded`, `ratelimit` CB health). Proven against a real Redis: two limiter instances
-sharing one account admit ~1× (not ~2×) the per-instance count
-(`DistributedRateLimiterIntegrationTest`). All suites green (detection **80**, relay 5, alert 10,
+sharing one account admit ~1× (not ~2×) the per-instance count (`DistributedRateLimiterIntegrationTest`). All suites
+green (detection **80**, relay 5, alert 10,
 triage 31).
 
 **Negative:** the hot path gains one Redis round-trip before the gate (bounded 500ms, bulkheaded,
 CB-protected; negligible vs the gate it precedes). Two limiters now coexist (distributed + local
-fallback) — a small dual-surface cost, justified by never-fail-closed. The triage LLM RPM limit
-(ADR-15) remains per-instance by design — a documented asymmetry, not an oversight.
+fallback) — a small dual-surface cost, justified by never-fail-closed. The triage LLM RPM limit (ADR-15) remains
+per-instance by design — a documented asymmetry, not an oversight.
 
 ## Residual Risks (explicit)
 
@@ -142,8 +143,8 @@ fallback) — a small dual-surface cost, justified by never-fail-closed. The tri
   exists to provide. **Fix:** the script now reads `redis.call('TIME')`, so every replica refills
   off one clock (the Redis primary's); the Java caller no longer passes `now_ms`. This makes the
   script effects-replicated (fine on Redis 7+, the only mode this system runs) and removes clock
-  skew as a correctness variable entirely. The old integration test
-  (`DistributedRateLimiterIntegrationTest`) still proves the global cap via the unchanged
+  skew as a correctness variable entirely. The old integration test (`DistributedRateLimiterIntegrationTest`) still
+  proves the global cap via the unchanged
   `tryConsume` contract; note it ran with synchronised clocks and so never exercised the skew this
   fix removes — a multi-replica-skew soak remains the stronger proof.
 - **R3 — Per-account hot-spotting unchanged.** This makes the *limit* global; it does not redistribute
@@ -171,7 +172,7 @@ fallback). No data-format, schema, or topic change; the `ratelimit:` keys expire
 
 ## Changelog
 
-| Version | Date | Author | Description |
-|---|---|---|---|
-| 1.1.0 | 2026-07-02 | @amit | R2 resolved — bucket clock moved from caller `System.currentTimeMillis()` to server-authoritative `redis.call('TIME')`; removes inter-replica skew from the shared bucket (arch audit). |
-| 1.0.0 | 2026-06-29 | @amit | Initial — ACCEPTED. Establishes a global atomic Lua token bucket in Redis with circuit-breaker fallback to local Guava limiters on outage. |
+| Version | Date       | Author | Description                                                                                                                                                                             |
+|---------|------------|--------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.1.0   | 2026-07-02 | @amit  | R2 resolved — bucket clock moved from caller `System.currentTimeMillis()` to server-authoritative `redis.call('TIME')`; removes inter-replica skew from the shared bucket (arch audit). |
+| 1.0.0   | 2026-06-29 | @amit  | Initial — ACCEPTED. Establishes a global atomic Lua token bucket in Redis with circuit-breaker fallback to local Guava limiters on outage.                                              |

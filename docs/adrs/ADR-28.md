@@ -8,7 +8,7 @@ last_updated: 2026-07-15
 status: ACCEPTED
 reversal_cost: LOW
 owner: amit
-tags: [postgres, dedup, purge, retention, dlt, re-drive, correctness, adr-23-follow-on, adr-27-sibling]
+tags: [ postgres, dedup, purge, retention, dlt, re-drive, correctness, adr-23-follow-on, adr-27-sibling ]
 ---
 
 # ADR-28 — Dedup-guard horizon: `processed_alerts` purge must outlive every redelivery/re-drive window
@@ -19,8 +19,8 @@ tags: [postgres, dedup, purge, retention, dlt, re-drive, correctness, adr-23-fol
 
 Supersedes: nothing. Related: ADR-06 (relay at-least-once delivery — the reason a duplicate `alert_id`
 can reach `payment.alerts` at all), ADR-13 (deterministic UUIDv5 `alert_id` — what makes the guard a
-single `ON CONFLICT` check), ADR-17 §3.4 (alert-service is sole writer of `processed_alerts`), ADR-23
-(DLT re-drive strategy — the operational path that can re-present an old `alert_id`), ADR-27 (sibling
+single `ON CONFLICT` check), ADR-17 §3.4 (alert-service is sole writer of `processed_alerts`), ADR-23 (DLT re-drive
+strategy — the operational path that can re-present an old `alert_id`), ADR-27 (sibling
 2026-07-12 arch-audit finding R5, stats-key TTL — same audit cycle, same backfill-ADR treatment).
 
 ---
@@ -28,8 +28,8 @@ single `ON CONFLICT` check), ADR-17 §3.4 (alert-service is sole writer of `proc
 ## Context
 
 `processed_alerts` is the exactly-once guard for RPE's at-least-once `payment.alerts` delivery: the
-relay can re-send a record after a crash between its Kafka commit and the outbox status UPDATE
-(ADR-06), and every consumer of `payment.alerts` is required to dedupe via `INSERT ... ON CONFLICT DO
+relay can re-send a record after a crash between its Kafka commit and the outbox status UPDATE (ADR-06), and every
+consumer of `payment.alerts` is required to dedupe via `INSERT ... ON CONFLICT DO
 NOTHING` keyed on the deterministic UUIDv5 `alert_id` (ADR-13). That guard is only idempotent while
 the original row still exists in the table. Several paths can re-present an old `alert_id` after the
 fact: an operator-initiated DLT/parked re-drive (retention pinned at 14 days + `segment.ms` 1 day in
@@ -39,8 +39,8 @@ all three infra files, per ADR-23), a relay-outage backlog drain, or a consumer 
 Purge `processed_alerts` too aggressively and a legitimate late re-drive or replay silently double-acts
 on an alert whose guard row is already gone.
 
-This is a 2026-07-12 arch-audit finding (R4), from the same audit cycle and bundle that produced R5
-(stats-key TTL, `ADR-27`). It was implemented directly — `ProcessedAlertsPurge.java` in
+This is a 2026-07-12 arch-audit finding (R4), from the same audit cycle and bundle that produced R5 (stats-key TTL,
+`ADR-27`). It was implemented directly — `ProcessedAlertsPurge.java` in
 `rpe-alert-service`, an hourly `@Scheduled` purge — and documented in Architecture Spec's Known Limitations
 and the class's own javadoc, but unlike R5 it never got a standalone ADR. This backfills that gap.
 
@@ -70,12 +70,14 @@ same discipline Architecture Spec already applies to the shutdown-timeout trio.
 ## Consequences
 
 **Positive:**
+
 - `processed_alerts` holds ~30 days of rows — the table is small (~1% of all events), so this is cheap.
 - The purge horizon is now an explicit, documented inequality rather than an assumed-safe constant —
   any future change to DLT/parked retention, re-drive SLA, or topic retention has a concrete check to
   run before shipping.
 
 **Negative:**
+
 - A relay outage or a parked record older than the purge horizon can still theoretically double-act —
   bounded by the 30-day margin, not eliminated (already surfaced in Architecture Spec Known Limitations).
 - The invariant is enforced by convention and code comment, not by an automated cross-check between
@@ -110,6 +112,6 @@ latency margin without re-verifying the inequality this ADR states.
 
 ## Changelog
 
-| Date | Version | Author | Change |
-|---|---|---|---|
-| 2026-07-15 | 1.0.0 | amit | Initial — ACCEPTED. Backfills the 2026-07-12 arch-audit R4 finding, formalizing the 30-day purge horizon for `processed_alerts` to strictly outlive all redelivery, DLT re-drive, and topic retention windows. |
+| Date       | Version | Author | Change                                                                                                                                                                                                         |
+|------------|---------|--------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-07-15 | 1.0.0   | amit   | Initial — ACCEPTED. Backfills the 2026-07-12 arch-audit R4 finding, formalizing the 30-day purge horizon for `processed_alerts` to strictly outlive all redelivery, DLT re-drive, and topic retention windows. |

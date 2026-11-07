@@ -8,7 +8,7 @@ last_updated: 2026-07-12
 status: ACCEPTED
 reversal_cost: LOW
 owner: amit
-tags: [redis, lua, welford, eviction, ttl, lifecycle, observability, adr-10-follow-on]
+tags: [ redis, lua, welford, eviction, ttl, lifecycle, observability, adr-10-follow-on ]
 ---
 
 # ADR-27 — Stats-key lifecycle: sliding idle TTL on `stats:{account}`, memory watermark
@@ -64,8 +64,8 @@ wedge.
   N days) — rejected. A new moving part (pacing, cursor state, its own failure modes and metrics)
   that re-implements what Redis expiry does natively in one script line. The audit's own first
   proposal; demoted on critique for exactly that reason.
-- **`allkeys-lru`** — rejected. Makes everything evictable but erases the deliberate eviction
-  *ordering* (dedup/vel/geo are designed short-lived candidates; stats should outlive them under
+- **`allkeys-lru`** — rejected. Makes everything evictable but erases the deliberate eviction *ordering* (dedup/vel/geo
+  are designed short-lived candidates; stats should outlive them under
   mild pressure). The TTL keeps ADR-10's ordering while removing only the immortality.
 - **Watermark alert only, no lifecycle** — rejected. An alert on unbounded growth just schedules
   the wedge for a human to watch; the set still grows to any ceiling.
@@ -92,7 +92,7 @@ wedge.
 - Under sustained pressure, LRU approximation can evict a stats key for an account that is
   merely *infrequent*, not dormant — same 30-sample re-entry cost. This is the deliberate trade:
   per-account degradation over global stall.
-- One extra O(1) `PEXPIRE` per event inside the atomic script — negligible against the existing
+- One extra O (1) `PEXPIRE` per event inside the atomic script — negligible against the existing
   ZADD/ZREMRANGEBYSCORE/HSET work.
 - The loss mode is invisible per-account (no per-key expiry metric; unbounded cardinality would
   violate the security discipline's tag conventions). Accepted — the aggregate watermark is the signal.
@@ -129,6 +129,6 @@ silent revert fails the build.
 
 ## Changelog
 
-| Version | Date | Author | Description |
-|---|---|---|---|
-| 1.0.0 | 2026-07-12 | @amit | Initial — ACCEPTED. Adds a sliding idle TTL to `stats:{account}` Welford baselines in `gate.lua` and introduces Redis memory watermark gauges and Prometheus alerts. |
+| Version | Date       | Author | Description                                                                                                                                                          |
+|---------|------------|--------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0.0   | 2026-07-12 | @amit  | Initial — ACCEPTED. Adds a sliding idle TTL to `stats:{account}` Welford baselines in `gate.lua` and introduces Redis memory watermark gauges and Prometheus alerts. |

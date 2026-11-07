@@ -8,7 +8,7 @@ last_updated: 2026-06-29
 status: ACCEPTED
 reversal_cost: LOW
 owner: amit
-tags: [error-handling, archunit, code-quality, boundary-handler, exceptions]
+tags: [ error-handling, archunit, code-quality, boundary-handler, exceptions ]
 ---
 
 # ADR-21 — Exception-boundary discipline: narrow by default, broad catch only in `@BoundaryHandler`, ArchUnit-enforced
@@ -52,19 +52,19 @@ boundaries, the R4j LLM wrapper, the publish wrappers, the triage message handle
 
 ## Alternatives Considered
 
-| Option | Decision | Reason |
-|---|---|---|
-| Blanket ban on `catch (Exception)` | Rejected | Breaks the correct resilient-loop pattern; would force fragile rethrow gymnastics at boundaries. |
-| Doc-only convention (no enforcement) | Rejected | Conventions rot; the repo's culture is ArchUnit-enforced. A future broad catch must fail the build. |
-| Annotate every broad catch (skip narrowing) | Rejected | The annotation becomes wallpaper; narrowing where a known throw surface exists keeps the broad-catch surface genuinely minimal and the annotation meaningful. |
-| Flag `Throwable` too | Rejected | Try-with-resources desugars to a synthetic `catch (Throwable)` indistinguishable via ArchUnit; flagging it produces unavoidable false positives. Target `Exception` only. |
+| Option                                      | Decision | Reason                                                                                                                                                                    |
+|---------------------------------------------|----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Blanket ban on `catch (Exception)`          | Rejected | Breaks the correct resilient-loop pattern; would force fragile rethrow gymnastics at boundaries.                                                                          |
+| Doc-only convention (no enforcement)        | Rejected | Conventions rot; the repo's culture is ArchUnit-enforced. A future broad catch must fail the build.                                                                       |
+| Annotate every broad catch (skip narrowing) | Rejected | The annotation becomes wallpaper; narrowing where a known throw surface exists keeps the broad-catch surface genuinely minimal and the annotation meaningful.             |
+| Flag `Throwable` too                        | Rejected | Try-with-resources desugars to a synthetic `catch (Throwable)` indistinguishable via ArchUnit; flagging it produces unavoidable false positives. Target `Exception` only. |
 
 ## Consequences
 
 **Positive:** broad catches in domain logic are now a build failure; every remaining broad catch is a
 deliberate, greppable, reason-documented boundary; slots into existing per-service ArchUnit guards;
-unchanged behavior (all suites green: detection 76, relay 5, alert 10, triage 28).
-**Negative:** ~12 annotations + 4 rule copies to maintain; the rule checks breadth, not swallow-quality.
+unchanged behavior (all suites green: detection 76, relay 5, alert 10, triage 28). **Negative:** ~12 annotations + 4
+rule copies to maintain; the rule checks breadth, not swallow-quality.
 
 ## Residual Risks (explicit)
 
@@ -91,6 +91,6 @@ catches are strictly-better standalone improvements and would stay.
 
 ## Changelog
 
-| Version | Date | Author | Description |
-|---|---|---|---|
-| 1.0.0 | 2026-06-29 | @amit | Initial — ACCEPTED. Establishes exception-boundary discipline requiring narrow catches by default, restricting broad `Exception` handling to `@BoundaryHandler` code units, enforced via ArchUnit. |
+| Version | Date       | Author | Description                                                                                                                                                                                        |
+|---------|------------|--------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0.0   | 2026-06-29 | @amit  | Initial — ACCEPTED. Establishes exception-boundary discipline requiring narrow catches by default, restricting broad `Exception` handling to `@BoundaryHandler` code units, enforced via ArchUnit. |

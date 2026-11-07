@@ -8,7 +8,7 @@ last_updated: 2026-07-06
 status: ACCEPTED
 reversal_cost: LOW
 owner: amit
-tags: [kafka, async-acks, offset-commit, circuit-breaker, resilience4j, dlt, re-drive, correctness, detection, adr-02-follow-on, adr-23-follow-on]
+tags: [ kafka, async-acks, offset-commit, circuit-breaker, resilience4j, dlt, re-drive, correctness, detection, adr-02-follow-on, adr-23-follow-on ]
 ---
 
 # ADR-26 — Detection ordering-and-recovery correctness: async acks, CB auto-transition, outcome-aware DLT re-drive
@@ -52,8 +52,8 @@ whenever lane completion reordered acks.
 to the `redis` breaker opening by **buffering every event without calling the gate** — deliberately,
 so a Redis outage stops hammering Redis. But Resilience4j's OPEN→HALF_OPEN transition is **lazy by
 default**: "the transition to HALF_OPEN only happens if a call is made, even after
-`waitDurationInOpenState` is passed." A traffic-stopping fallback plus a call-triggered transition is a
-**mutual wait**: the breaker waits for a call to move to HALF_OPEN; the fallback waits for the
+`waitDurationInOpenState` is passed." A traffic-stopping fallback plus a call-triggered transition is a **mutual wait**:
+the breaker waits for a call to move to HALF_OPEN; the fallback waits for the
 OPEN→HALF_OPEN event to start draining. Nothing breaks the cycle. Detection wedges **permanently** —
 the buffer fills, the handler transitions to PAUSED, the consumer is paused, and zero probes ever run
 again; **Redis recovering does not un-wedge it.** The existing `CbFallbackHandlerTest` masked the bug
@@ -63,13 +63,13 @@ by calling `transitionToHalfOpenState()` manually — a call nothing in producti
 choreographed NORMAL/BUFFERING/PAUSED/DRAINING across three threads (the Kafka listener, the R4j event
 publisher, the drain thread) with lone CAS operations: (i) a task offered in the window between the
 drain's final empty poll and its DRAINING→NORMAL flip was **stranded until the next CB cycle —
-potentially forever**; (ii) an R4j `HALF_OPEN_TO_CLOSED` event could flip the handler to NORMAL
-**mid-drain with a non-empty buffer**, letting fresh events for an account overtake older buffered
+potentially forever**; (ii) an R4j `HALF_OPEN_TO_CLOSED` event could flip the handler to NORMAL **mid-drain with a
+non-empty buffer**, letting fresh events for an account overtake older buffered
 events for the *same* account — inverting per-account state-mutation order (stale geo re-applied after
 newer state), the one ordering guarantee the lane exists to provide.
 
-**3. A post-gate alert failure was lost on re-drive.** The gate's step 4 (dedup `SET NX`) runs
-**last** and **before Java sees the result** (ADR-14, immutable dedup-last). So when a detector fires
+**3. A post-gate alert failure was lost on re-drive.** The gate's step 4 (dedup `SET NX`) runs **last** and **before
+Java sees the result** (ADR-14, immutable dedup-last). So when a detector fires
 but the alert intent cannot be durably enqueued (outbox saturated past its backpressure window —
 sustained Postgres outage), the event reaches `payment.events.DLT` **with its dedup key already
 marked**. A later operator re-drive (ADR-23) is therefore **dedup-blocked**: the detectors never
@@ -99,6 +99,7 @@ plus a race-hardened `CbFallbackHandler`.** The automatic transition makes OPEN�
 schedule with zero traffic** — precisely the traffic pattern the fallback produces — which fires the
 `OPEN_TO_HALF_OPEN` event that starts the drain, breaking the mutual wait. The handler was rewritten so
 transitions are correct under concurrency:
+
 - `dispatch(accountId, task)` is the **single** lane-vs-buffer routing decision. The NORMAL fast path
   is a lock-free volatile read; **every other decision re-checks state under one `transitionLock`**,
   so an offer can never interleave with the NORMAL flip (kills race i).
@@ -110,12 +111,13 @@ transitions are correct under concurrency:
   back through `CallNotPermittedException` → `dispatch` → buffer, a churn storm on every recovery. The
   consumer is paused only on BUFFERING→PAUSED and resumed only on DRAINING→NORMAL (resume on an
   un-paused container is a harmless no-op, so the pairing stays balanced on every path).
-Pinned by `RedisCircuitBreakerAutoTransitionTest` (the config flag + the zero-traffic HALF_OPEN
-mechanism it relies on).
+  Pinned by `RedisCircuitBreakerAutoTransitionTest` (the config flag + the zero-traffic HALF_OPEN
+  mechanism it relies on).
 
 **3. Outcome-aware DLT records + a re-drive reconstruction path.** A post-gate "fired but not durable"
 failure now carries the detection outcome to the DLT as headers, and a re-driven copy of such a record
 is reconstructed straight to the outbox:
+
 - `AlertNotDurableException(ruleName, reason)` is thrown when a detector fired but the outbox enqueue
   returned "saturated". The `DeadLetterPublishingRecoverer.headersFunction` stamps
   `x-rpe-outcome=ALERT_UNDURABLE`, `x-rpe-rule=<ruleName>`, `x-rpe-reason=<reason>` on the DLT record,
@@ -126,9 +128,9 @@ is reconstructed straight to the outbox:
   `ALERT_UNDURABLE` + a rule, the alert is reconstructed **deterministically** —
   `UUIDv5(eventId + ":" + rule)`, the identical `alert_id` (ADR-13) — and submitted **straight to the
   outbox**: no gate re-run, no velocity/Welford/geo pollution; `processed_alerts ON CONFLICT` absorbs
-  the duplicate if the original intent had in fact reached Postgres. Still-saturated ⇒ back to the DLT
-  (headers re-stamped). A re-driven dedup-blocked record with **no** reconstructable outcome is
-  **fail-visible** — returned to the DLT so the attempt cap parks it for an operator (ADR-23), never a
+  the duplicate if the original intent had in fact reached Postgres. Still-saturated ⇒ back to the DLT (headers
+  re-stamped). A re-driven dedup-blocked record with **no** reconstructable outcome is **fail-visible** — returned to
+  the DLT so the attempt cap parks it for an operator (ADR-23), never a
   silent ack that pretends it was handled. Metrics: `rpe.redrive.reconstructed{outcome}`,
   `rpe.redrive.unrecoverable`.
 - `deploy/kafka/dlt-redrive.sh` now **re-emits the original record headers** on re-produce (all
@@ -138,16 +140,16 @@ is reconstructed straight to the outbox:
 
 ## Alternatives Considered
 
-| Option | Decision | Reason |
-|---|---|---|
-| Keep per-record sync acks (no `asyncAcks`) | Rejected | Lane completion reorders acks vs. offsets; the committed watermark passes in-flight events → silent permanent loss on crash. The bug this fixes. |
-| Force offset-ordered ack by serialising lane completion in offset order | Rejected | Reintroduces head-of-line blocking across accounts and destroys the per-account parallelism the lane model exists for — one slow account would stall commit for all. `asyncAcks` gets ordered *commit* without ordered *completion*. |
-| Tickle the lazy CB with a synthetic health-probe call on a timer | Rejected | Reinvents R4j's own `automaticTransitionFromOpenToHalfOpen`, adds a fake call path, and still races the fallback's state. Use the built-in transition. |
-| Keep the CAS-choreographed fallback (add more CAS) | Rejected | The two races are inherent to lock-free multi-owner transitions here. A single `transitionLock` (with a lock-free NORMAL fast path + under-lock re-check) is simpler and provably strands nothing. |
-| Re-run the gate/detectors on a re-driven record | Rejected | Impossible and unsafe: the record is dedup-blocked (gate step 4 already marked it), and re-running would mutate velocity/Welford/geo — violating "a throttled/breached/replayed event must not mutate state". Past the TTL the velocity window has moved, so the rule would not re-fire regardless. |
-| DLT the undurable event with no outcome headers (pre-fix behaviour) | Rejected | The alert is silently lost on re-drive (dedup-blocked, detectors skipped). Preserving the event without the outcome preserves nothing actionable. |
-| Random `alert_id` on reconstruction | Rejected | Breaks `processed_alerts` dedup and replay safety permanently (ADR-13). The whole point is that UUIDv5 makes the reconstructed `alert_id` bit-identical to the original. |
-| Silently ack a re-driven dedup-blocked record with no outcome | Rejected | Indistinguishable from "handled"; hides a real gap. Fail-visible → park → operator decision (ADR-23) is the correct terminal. |
+| Option                                                                  | Decision | Reason                                                                                                                                                                                                                                                                                              |
+|-------------------------------------------------------------------------|----------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Keep per-record sync acks (no `asyncAcks`)                              | Rejected | Lane completion reorders acks vs. offsets; the committed watermark passes in-flight events → silent permanent loss on crash. The bug this fixes.                                                                                                                                                    |
+| Force offset-ordered ack by serialising lane completion in offset order | Rejected | Reintroduces head-of-line blocking across accounts and destroys the per-account parallelism the lane model exists for — one slow account would stall commit for all. `asyncAcks` gets ordered *commit* without ordered *completion*.                                                                |
+| Tickle the lazy CB with a synthetic health-probe call on a timer        | Rejected | Reinvents R4j's own `automaticTransitionFromOpenToHalfOpen`, adds a fake call path, and still races the fallback's state. Use the built-in transition.                                                                                                                                              |
+| Keep the CAS-choreographed fallback (add more CAS)                      | Rejected | The two races are inherent to lock-free multi-owner transitions here. A single `transitionLock` (with a lock-free NORMAL fast path + under-lock re-check) is simpler and provably strands nothing.                                                                                                  |
+| Re-run the gate/detectors on a re-driven record                         | Rejected | Impossible and unsafe: the record is dedup-blocked (gate step 4 already marked it), and re-running would mutate velocity/Welford/geo — violating "a throttled/breached/replayed event must not mutate state". Past the TTL the velocity window has moved, so the rule would not re-fire regardless. |
+| DLT the undurable event with no outcome headers (pre-fix behaviour)     | Rejected | The alert is silently lost on re-drive (dedup-blocked, detectors skipped). Preserving the event without the outcome preserves nothing actionable.                                                                                                                                                   |
+| Random `alert_id` on reconstruction                                     | Rejected | Breaks `processed_alerts` dedup and replay safety permanently (ADR-13). The whole point is that UUIDv5 makes the reconstructed `alert_id` bit-identical to the original.                                                                                                                            |
+| Silently ack a re-driven dedup-blocked record with no outcome           | Rejected | Indistinguishable from "handled"; hides a real gap. Fail-visible → park → operator decision (ADR-23) is the correct terminal.                                                                                                                                                                       |
 
 ## Consequences
 
@@ -222,6 +224,6 @@ Immutable Constraints in review.
 
 ## Changelog
 
-| Version | Date | Author | Description |
-|---|---|---|---|
-| 1.0.0 | 2026-07-06 | @amit | Initial — ACCEPTED. Enforces asyncAcks deferred commits, enables auto OPEN-to-HALF_OPEN Redis CB transition, and introduces outcome-aware DLT headers with deterministic UUIDv5 alert reconstruction. |
+| Version | Date       | Author | Description                                                                                                                                                                                           |
+|---------|------------|--------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0.0   | 2026-07-06 | @amit  | Initial — ACCEPTED. Enforces asyncAcks deferred commits, enables auto OPEN-to-HALF_OPEN Redis CB transition, and introduces outcome-aware DLT headers with deterministic UUIDv5 alert reconstruction. |

@@ -6,15 +6,19 @@
 
 ## Context
 
-`allkeys-lru` evicts any key under memory pressure, including Welford `stats:{account}` keys which have no TTL. Evicting stats silently resets an account's z-score history — 30-event warmup restarts; z-score is blind during warmup. This is the most expensive form of state loss in RPE.
+`allkeys-lru` evicts any key under memory pressure, including Welford `stats:{account}` keys which have no TTL. Evicting
+stats silently resets an account's z-score history — 30-event warmup restarts; z-score is blind during warmup. This is
+the most expensive form of state loss in RPE.
 
 ## Decision
 
-`maxmemory-policy volatile-lru`. Welford stats keys carry no TTL by design — they are fully protected under `volatile-lru`. Dedup, velocity, and geo keys carry TTLs and remain eviction candidates.
+`maxmemory-policy volatile-lru`. Welford stats keys carry no TTL by design — they are fully protected under
+`volatile-lru`. Dedup, velocity, and geo keys carry TTLs and remain eviction candidates.
 
 ## Alternatives
 
-**`allkeys-lru`:** Evicts stats keys under pressure, silently restarting warmup for affected accounts. Loss is not self-healing within the session. Rejected.
+**`allkeys-lru`:** Evicts stats keys under pressure, silently restarting warmup for affected accounts. Loss is not
+self-healing within the session. Rejected.
 
 **`noeviction`:** Redis returns errors on write when memory is full. Consumer pipeline errors out. Rejected.
 
@@ -26,10 +30,11 @@
 
 ## Failure Modes
 
-- **Redis hits `maxmemory`:** `volatile-lru` begins evicting TTL-bearing keys. Detection: `rpe.dedup.blocked` drops (dedup key evicted = replay slips through). Mitigation: increase `maxmemory` or reduce account population.
+- **Redis hits `maxmemory`:** `volatile-lru` begins evicting TTL-bearing keys. Detection: `rpe.dedup.blocked` drops
+  (dedup key evicted = replay slips through). Mitigation: increase `maxmemory` or reduce account population.
 
 ## Changelog
 
-| Version | Date | Author | Description |
-|---|---|---|---|
-| 1.0.0 | 2026-05-20 | @amit | Initial — ACCEPTED. Configures Redis with `volatile-lru` to protect non-expiring Welford statistics from eviction while allowing TTL-based dedup, velocity, and geo state to be evicted under memory pressure. |
+| Version | Date       | Author | Description                                                                                                                                                                                                    |
+|---------|------------|--------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0.0   | 2026-05-20 | @amit  | Initial — ACCEPTED. Configures Redis with `volatile-lru` to protect non-expiring Welford statistics from eviction while allowing TTL-based dedup, velocity, and geo state to be evicted under memory pressure. |
