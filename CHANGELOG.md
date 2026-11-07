@@ -7,6 +7,19 @@ milestone; test counts are per service (detection / relay / alert / triage) at t
 > (where a reader expects it) rather than inline in the AI-context file, where a reader — human or
 > AI — can mistake past states for current ones.
 
+## v1.18 — 2026-11-05
+
+RAG retrieval-selection evaluation (test scope; no runtime behavior change):
+
+- **Eval harness** under `rpe-triage-agent` test scope: synthetic 300-chunk corpus, Ollama `mxbai-embed-large`
+  embeddings (test-scoped `spring-ai-starter-model-ollama`), TopK / dedup / MMR / relative-floor selectors, executable
+  hard invariants and printed soft gates. Skips without Docker + Ollama; a skip is not a measurement.
+- **Finding (lab-only):** no label-free selector (dedup, MMR, relative floor) beat plain TopK on prod-shaped pools.
+  Single templated corpus, one seed, non-prod embeddings, no faithfulness measurement. No runtime change.
+- **ADR-30 v1.4.0 (PROPOSED):** evaluation findings recorded; placeholder-gate proposal (D2) superseded and never
+  implemented; v1 retrieval decided as exact `rule_name` lookup (D3), implementation pending a later runtime release.
+- Triage tests: 52 (1 env-gated RAG eval, skipped by default), measured 2026-11-05.
+
 ## v1.17 — 2026-09-11
 
 Internal rule-filename references scrubbed from world-facing docs (CHANGELOG, `deploy/README.md`,
@@ -49,16 +62,16 @@ Three-repo over-engineering audit closure (build hygiene + rename; no behavior c
   zero callers — its own javadoc called it dead since the ADR-17 §7 Stage 1 extraction. The ADR-05
   signal-is-an-optimisation invariant now lives on `awaitSignal`'s javadoc.
 - **k8s manifests gain CPU/memory `requests`** (memory request = existing limit, so scheduling
-  semantics are unchanged; CPU uncapped to avoid throttling); `deploy/README.md` de-staled
-  (Stages 1–5 complete, this compose canonical, Stage 6 authored/e2e-pending).
+  semantics are unchanged; CPU uncapped to avoid throttling); `deploy/README.md` de-staled (Stages 1–5 complete, this
+  compose canonical, Stage 6 authored/e2e-pending).
 - Repo newly git-tracked (baseline + per-refactor commits; oauth `keys/` verified ignored).
 - **Pin-drift gate + Renovate** (the audit's duplicate-pins finding, closed without a shared BOM):
   `scripts/check-pin-drift.py` (ci.yml `pin-drift` job) fails the build when a coordinate declared
   in ≥2 POMs — or any `io.github.resilience4j` artifact repo-wide (the POMs pin disjoint r4j
   artifactIds, invisible per-coordinate) — resolves to more than one version; `renovate.json`
   keeps pins aligned on upgrade (one Renovate PR updates every declaring POM). A shared BOM was
-  rejected deliberately: a local one breaks the `mvn -f` matrix and per-service Docker contexts
-  (ADR-17 §3.5 module-deletion=rollback), and the only $0 registry (GitHub Packages) requires PAT
+  rejected deliberately: a local one breaks the `mvn -f` matrix and per-service Docker contexts (ADR-17 §3.5
+  module-deletion=rollback), and the only $0 registry (GitHub Packages) requires PAT
   auth even for public consumption — polluting the credential-free CI/Docker posture. Verified:
   positive pass on the real POMs (3 shared coordinates incl. the Boot parent), negative run
   catches seeded coordinate and group drift.
@@ -111,8 +124,8 @@ all four Deployments.
 ## v1.11 — 2026-06-27
 
 ADR-17 §7 Stage 6 — CNPG HA cluster; per-service schemas + login roles + least-privilege GRANTs;
-Flyway scoped to owning schema; per-service DB credential Secrets; OrbStack k8s canonical topology
-(`deploy/k8s/`: CNPG + Redpanda + Redis, four service Deployments, default-deny NetworkPolicies, OTel
+Flyway scoped to owning schema; per-service DB credential Secrets; OrbStack k8s canonical topology (`deploy/k8s/`:
+CNPG + Redpanda + Redis, four service Deployments, default-deny NetworkPolicies, OTel
 Operator + Collector + Tempo + Grafana + Prometheus). Full pipeline e2e verified across schema
 boundaries.
 
@@ -164,7 +177,7 @@ ADR-16 (Spring Boot 4.1.x migration; ACCEPTED); + updated internal migration rul
 ## v1.1 — 2026-06-12
 
 + `rpe-triage-agent` module (Spring AI, ADR-15): stack entry, runtime rows, constraints, limitations,
-commands.
+  commands.
 
 ## v1.0
 
