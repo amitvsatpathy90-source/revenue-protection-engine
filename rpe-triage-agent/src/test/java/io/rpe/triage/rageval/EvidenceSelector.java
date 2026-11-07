@@ -136,10 +136,10 @@ final class TopKDedupSelector implements EvidenceSelector {
 
 /**
  * Maximal Marginal Relevance: greedily picks the candidate maximizing
- * {@code lambda * relevance - (1 - lambda) * maxSimilarityToAlreadySelected}.
+ * {@code lambda * querySimilarity - (1 - lambda) * maxSimilarityToAlreadySelected}.
  *
- * <p>{@code lambda=1.0} degenerates to {@link TopKSelector}; {@code lambda=0.0} ignores
- * query relevance entirely and only maximizes diversity.
+ * <p>{@code lambda=1.0} degenerates to {@link TopKSelector};
+ * {@code lambda=0.0} ignores query similarity and maximizes diversity.
  *
  * <p>Reuses {@link CachedEmbeddingClient} for pairwise chunk similarity. The cache is populated
  * during corpus insertion, so this adds no new Ollama calls after corpus embeddings are cached.
@@ -168,7 +168,9 @@ final class MMRSelector implements EvidenceSelector {
 
             for (var candidate : remaining) {
                 double maxSimToSelected = selected.stream()
-                        .mapToDouble(s -> cosineSimilarity(candidate.chunk(), s.chunk()))
+                        .mapToDouble(s ->
+                                cosineSimilarity(candidate.chunk(),
+                                        s.chunk()))
                         .max()
                         .orElse(0.0);
 
@@ -212,7 +214,8 @@ final class MMRSelector implements EvidenceSelector {
 }
 
 /**
- * Admissibility floor: drops candidates far below the best score, then delegates.
+ * Retains candidates within {@code delta} of the highest query-similarity score,
+ * then delegates final selection.
  */
 final class RelativeFloorSelector implements EvidenceSelector {
 

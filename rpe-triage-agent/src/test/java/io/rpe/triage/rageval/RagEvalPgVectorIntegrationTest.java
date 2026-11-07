@@ -39,9 +39,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * table. The 1,024-dimensional vectors match the evaluation-only Ollama model,
  * not the production OpenAI embedding model.</p>
  *
- * <p>Compares TopK with multiple MMR lambda values. Each query's candidate
- * pool is retrieved once and shared across selectors, isolating the impact
- * of the selection strategy.</p>
+ * <p>Compares TopK, TopK+dedup, MMR variants and relative-floor selectors.
+ * Each query's candidate pool is retrieved once and shared across selectors,
+ * isolating the impact of the selection strategy.</p>
  */
 @Testcontainers(disabledWithoutDocker = true)
 @EnabledIf("ollamaUp")
@@ -217,7 +217,7 @@ class RagEvalPgVectorIntegrationTest {
 
             System.out.println(
                     "=== Scoped pools + unscoped parity: "
-                            + "TopK vs TopK+dedup vs MMR ===");
+                            + "TopK vs TopK+dedup vs MMR and relative floor selectors ===");
 
             var harness = new RagEvalHarness();
             var retriever = new OfflineCandidateRetriever(jdbc);
