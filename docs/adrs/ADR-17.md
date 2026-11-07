@@ -10,12 +10,15 @@ adr_superseded_by: null
 # ADR-17 — Decompose RPE into independently deployable services along correctness-safe seams
 
 ## Status
+
 ACCEPTED
 
 ## Owner
+
 amit
 
 ## Related
+
 - ADR-01 (runtime surface split — survives intact, now per-service)
 - ADR-05 (`RelayTrigger` interface — the relay's designed extraction seam)
 - ADR-06 (`RELAY_INSTANCE_ID` per-instance `transactional.id` — already multi-instance safe)
@@ -32,12 +35,12 @@ RPE is already a **modular monolith with one extracted service** (`rpe-triage-ag
 We make the decomposition explicit and complete it: **four independently deployable services**
 bounded by the correctness contexts that already exist in the code —
 
-| Service | Bounded context | Owns (data) | Topics |
-|---|---|---|---|
-| `rpe-detection-service` | Ingest + atomic detect + persist alert-intent | **all** Redis state; **writes** `outbox` | consumes `payment.events`; → `payment.events.DLT` |
-| `rpe-relay-service` | Exactly-once delivery (outbox → topic) | reads/transitions `outbox` status | produces `payment.alerts` |
-| `rpe-alert-service` | Idempotent alert actioning | **owns** `processed_alerts` | consumes `payment.alerts`; → `payment.alerts.DLT` |
-| `rpe-triage-agent` (ADR-15) | Advisory LLM enrichment | **owns** `triaged_alerts` | consumes `payment.alerts`; → `payment.alerts.triaged` |
+| Service                     | Bounded context                               | Owns (data)                              | Topics                                                |
+|-----------------------------|-----------------------------------------------|------------------------------------------|-------------------------------------------------------|
+| `rpe-detection-service`     | Ingest + atomic detect + persist alert-intent | **all** Redis state; **writes** `outbox` | consumes `payment.events`; → `payment.events.DLT`     |
+| `rpe-relay-service`         | Exactly-once delivery (outbox → topic)        | reads/transitions `outbox` status        | produces `payment.alerts`                             |
+| `rpe-alert-service`         | Idempotent alert actioning                    | **owns** `processed_alerts`              | consumes `payment.alerts`; → `payment.alerts.DLT`     |
+| `rpe-triage-agent` (ADR-15) | Advisory LLM enrichment                       | **owns** `triaged_alerts`                | consumes `payment.alerts`; → `payment.alerts.triaged` |
 
 Services communicate **only** over Kafka (async). Contracts are shared as **versioned message
 schemas, never as a shared code jar** (ADR-11 / service-independence discipline, generalized). Each
@@ -49,8 +52,8 @@ each lift must keep the others' test suites green and cannot be big-banged.**
 
 **Two hard non-goals, stated up front, because they are the whole point of doing this with judgment:**
 
-1. **The detection core is NOT decomposed further.** Velocity, z-score, geo, and dedup run in
-   **one atomic Redis Lua round-trip** behind a **per-account single-threaded lane**. Splitting
+1. **The detection core is NOT decomposed further.** Velocity, z-score, geo, and dedup run in **one atomic Redis Lua
+   round-trip** behind a **per-account single-threaded lane**. Splitting
    them into "velocity-service / zscore-service / geo-service" destroys atomicity, ordering, and
    the dedup-last correctness invariant, and multiplies Redis round-trips. That is a distributed
    monolith wearing a microservices costume. We do not build it.
@@ -67,14 +70,14 @@ each lift must keep the others' test suites green and cannot be big-banged.**
 ### 2.1 What the codebase actually is today
 
 - **Core (`revenue-protection-engine`)** — a single Spring Boot deployable containing four
-  distinct responsibilities that already talk to each other through durable, async boundaries
-  (Kafka topics + the Postgres `outbox`), not in-process method calls on the hot path:
-  1. **Ingest + detect** — `PaymentEventConsumer` → per-account VT lane → `RedisGate` (atomic Lua)
-     → `Detector`s → `OutboxBatchWriter`. The HTTP/actuator surface (WebFlux/Netty) lives here.
-  2. **Relay** — `OutboxRelay` + `AlertPublisher` + `PostgresNotifyRelayTrigger`: a background
-     loop that drains `outbox` → `payment.alerts` with a Kafka-transactional producer.
-  3. **Alert actioning** — `AlertConsumer`: `payment.alerts` → `processed_alerts`
-     (`ON CONFLICT DO NOTHING`).
+  distinct responsibilities that already talk to each other through durable, async boundaries (Kafka topics + the
+  Postgres `outbox`), not in-process method calls on the hot path:
+    1. **Ingest + detect** — `PaymentEventConsumer` → per-account VT lane → `RedisGate` (atomic Lua)
+       → `Detector`s → `OutboxBatchWriter`. The HTTP/actuator surface (WebFlux/Netty) lives here.
+    2. **Relay** — `OutboxRelay` + `AlertPublisher` + `PostgresNotifyRelayTrigger`: a background
+       loop that drains `outbox` → `payment.alerts` with a Kafka-transactional producer.
+    3. **Alert actioning** — `AlertConsumer`: `payment.alerts` → `processed_alerts`
+       (`ON CONFLICT DO NOTHING`).
 - **Triage (`rpe-triage-agent`)** — already a separate Spring Boot module, **not** aggregated by
   the core pom, own port (8081), own Dockerfile, own DB table, own compose profile (ADR-15).
 
@@ -97,13 +100,13 @@ the intent:
 
 ### 2.3 Forces in tension
 
-| Force | Direction | Notes |
-|---|---|---|
-| Independent deployability / scaling | Split into services | Relay and detection have opposite scaling profiles (DB-bound batch vs. CPU/VT fan-out) |
-| Atomic-gate correctness | Keep detection indivisible | One Redis round-trip, per-account ordering, dedup-last are non-negotiable |
-| Exactly-once delivery | Keep outbox shared writer↔reader | Transactional outbox *requires* a shared table between producer and relay |
-| Loose coupling / independent evolution | No shared code jar | Schema-only contracts; additive evolution (ADR-11) |
-| Lab artifact constraints (8GB host, synthetic data) | Don't over-engineer | No service mesh, no per-service DB cluster, no saga framework |
+| Force                                               | Direction                        | Notes                                                                                  |
+|-----------------------------------------------------|----------------------------------|----------------------------------------------------------------------------------------|
+| Independent deployability / scaling                 | Split into services              | Relay and detection have opposite scaling profiles (DB-bound batch vs. CPU/VT fan-out) |
+| Atomic-gate correctness                             | Keep detection indivisible       | One Redis round-trip, per-account ordering, dedup-last are non-negotiable              |
+| Exactly-once delivery                               | Keep outbox shared writer↔reader | Transactional outbox *requires* a shared table between producer and relay              |
+| Loose coupling / independent evolution              | No shared code jar               | Schema-only contracts; additive evolution (ADR-11)                                     |
+| Lab artifact constraints (8GB host, synthetic data) | Don't over-engineer              | No service mesh, no per-service DB cluster, no saga framework                          |
 
 ---
 
@@ -128,8 +131,8 @@ guarantee. A service being down adds latency or backlog, never an error to its u
 
 Every message a service consumes or produces is declared as a **local** record in that service,
 annotated `@JsonIgnoreProperties(ignoreUnknown = true)` with a `schema_version` field. Producers
-evolve schemas **additively only**. There is no `rpe-common` code module (non-goal #2). Dependency
-*version* alignment (Boot, R4j, Jackson pins) is handled by convention/per-pom, not by a shared
+evolve schemas **additively only**. There is no `rpe-common` code module (non-goal #2). Dependency *version* alignment
+(Boot, R4j, Jackson pins) is handled by convention/per-pom, not by a shared
 business jar.
 
 ### 3.4 Data ownership: one owning writer per table; shared tables are published interfaces
@@ -139,12 +142,12 @@ transactional-outbox spine requires detection (writer) and relay (reader) to sha
 table. Instead we decompose the database into **single-owner schemas with contract-grade
 cross-service access**:
 
-| Table / store | Owning service | Cross-service access | Contract |
-|---|---|---|---|
-| Redis (all keys) | detection | triage `redisAccountHistory` tool — **read-only** | key shapes (per the atomic Lua gate rules) |
-| `outbox` | detection (**sole writer of rows**) | relay — reads + transitions `status` only | row schema + `PENDING→PUBLISHED/FAILED` state machine |
-| `processed_alerts` | alert-service (**sole writer**) | triage `recentAlertsForAccount` tool — **read-only** | row schema |
-| `triaged_alerts` | triage | none | — |
+| Table / store      | Owning service                      | Cross-service access                                 | Contract                                              |
+|--------------------|-------------------------------------|------------------------------------------------------|-------------------------------------------------------|
+| Redis (all keys)   | detection                           | triage `redisAccountHistory` tool — **read-only**    | key shapes (per the atomic Lua gate rules)            |
+| `outbox`           | detection (**sole writer of rows**) | relay — reads + transitions `status` only            | row schema + `PENDING→PUBLISHED/FAILED` state machine |
+| `processed_alerts` | alert-service (**sole writer**)     | triage `recentAlertsForAccount` tool — **read-only** | row schema                                            |
+| `triaged_alerts`   | triage                              | none                                                 | —                                                     |
 
 The `outbox` table is treated as a **published interface** (like a durable queue), not as shared
 mutable state. Its schema and status state machine are the contract; ADR-11's `FOR EACH STATEMENT`
@@ -152,47 +155,47 @@ trigger and opaque payload already make it schema-evolution-safe.
 
 ### 3.5 Each service is independently runnable, buildable, and testable
 
-- Own `pom.xml` on the Spring Boot parent; **no reactor aggregation** that couples build lifecycles
-  (consistent with ADR-15: "the core build never sees Spring AI"). `mvn -f <svc>/pom.xml verify`
+- Own `pom.xml` on the Spring Boot parent; **no reactor aggregation** that couples build lifecycles (consistent with
+  ADR-15: "the core build never sees Spring AI"). `mvn -f <svc>/pom.xml verify`
   builds any service alone.
 - Own `application.yml`, own Flyway migrations **scoped to the tables it owns**, own Dockerfile,
-  own actuator/Prometheus surface, own Kafka consumer group, own Resilience4j boundaries
-  (no global defaults — existing rule).
+  own actuator/Prometheus surface, own Kafka consumer group, own Resilience4j boundaries (no global defaults — existing
+  rule).
 - **Liveness with peers absent:** detection runs with relay/alert/triage all down (the `outbox`
   simply accumulates; `rpe.outbox.pending.age_seconds` rises and alerts). Relay runs with detection
-  down (drains whatever `outbox` already holds). Alert-service runs with everything else down
-  (consumes whatever is on `payment.alerts`). Triage already mandates this (ADR-15 §3.7). This is
+  down (drains whatever `outbox` already holds). Alert-service runs with everything else down (consumes whatever is on
+  `payment.alerts`). Triage already mandates this (ADR-15 §3.7). This is
   now a **rule**, asserted per service, not an accident.
 
 ### 3.6 The runtime surface split (ADR-01) survives — now per service
 
 Each service keeps the thread model its workload demands: detection = WebFlux/Netty HTTP +
 VT lanes + reactive Lettuce + platform-pool JDBC; relay = VT loop + platform-pool JDBC +
-transactional producer; alert-service = VT consumer + platform-pool JDBC; triage = MVC + VT
-(ADR-15). ADR-01 is unchanged; it is simply applied four times.
+transactional producer; alert-service = VT consumer + platform-pool JDBC; triage = MVC + VT (ADR-15). ADR-01 is
+unchanged; it is simply applied four times.
 
 ### 3.7 Scope of binding
 
 - **Applies to:** the whole workspace — every service module, the topic contracts, the table
   ownership map, the build/deploy topology.
 - **Does not change:** any detection-path correctness invariant (ADR-13/14, the atomic Lua gate rules), the
-  exactly-once delivery mechanism (ADR-02/05/06), or ADR-15's triage rules. This ADR is a
-  **structural** decision; it moves code across deployables, it does not alter behavior.
+  exactly-once delivery mechanism (ADR-02/05/06), or ADR-15's triage rules. This ADR is a **structural** decision; it
+  moves code across deployables, it does not alter behavior.
 - **Exceptions via:** successor ADR only.
 
 ---
 
 ## 4. Alternatives Considered
 
-| Option | Chosen / Rejected | Reason |
-|---|---|---|
-| **Service-per-bounded-context (4 services), Kafka-only, schema contracts, shared outbox as published interface** | **Chosen** | Maps deployables to the correctness contexts that already exist; preserves the atomic gate, ordering, and exactly-once; matches the affordances the code was built with (ADR-05/06/11/15) |
-| Keep the modular monolith as-is | Rejected | The seams, scaling profiles, and the already-extracted triage module make the monolith boundary arbitrary; relay/detection have opposite scaling needs |
-| Nano-services: split detection into velocity/zscore/geo services | **Rejected (hard non-goal)** | Destroys the atomic single-round-trip Lua gate, per-account ordering, and the dedup-last invariant; multiplies Redis round-trips; reintroduces distributed-transaction problems the design exists to avoid |
-| Shared `rpe-common`/`rpe-contracts` code jar for DTOs | **Rejected (hard non-goal)** | Compile-time recoupling → lockstep rebuild/redeploy of all services on any schema change = distributed monolith. Contradicts ADR-11 / ai-triage-rules §1.4, which the triage module already proves works |
-| Strict database-per-service (own DB per deployable) | Rejected for this artifact; documented as production path | Would require abandoning the transactional outbox (losing exactly-once) **or** an event-carried-state-transfer rebuild — out of scope for a synthetic lab artifact. Production path: per-service Postgres schemas + roles, GRANTs scoped to the contract tables (§5.3) |
-| Synchronous REST/gRPC between services | Rejected | Couples availability and latency; the hot path is built to commit offsets without waiting downstream — sync calls would throw that away |
-| Service mesh / saga orchestrator | Rejected | No distributed write transaction exists to coordinate (the outbox + idempotent consumers already give exactly-once); a mesh is pure overhead on an 8GB lab host |
+| Option                                                                                                           | Chosen / Rejected                                         | Reason                                                                                                                                                                                                                                                                 |
+|------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Service-per-bounded-context (4 services), Kafka-only, schema contracts, shared outbox as published interface** | **Chosen**                                                | Maps deployables to the correctness contexts that already exist; preserves the atomic gate, ordering, and exactly-once; matches the affordances the code was built with (ADR-05/06/11/15)                                                                              |
+| Keep the modular monolith as-is                                                                                  | Rejected                                                  | The seams, scaling profiles, and the already-extracted triage module make the monolith boundary arbitrary; relay/detection have opposite scaling needs                                                                                                                 |
+| Nano-services: split detection into velocity/zscore/geo services                                                 | **Rejected (hard non-goal)**                              | Destroys the atomic single-round-trip Lua gate, per-account ordering, and the dedup-last invariant; multiplies Redis round-trips; reintroduces distributed-transaction problems the design exists to avoid                                                             |
+| Shared `rpe-common`/`rpe-contracts` code jar for DTOs                                                            | **Rejected (hard non-goal)**                              | Compile-time recoupling → lockstep rebuild/redeploy of all services on any schema change = distributed monolith. Contradicts ADR-11 / ai-triage-rules §1.4, which the triage module already proves works                                                               |
+| Strict database-per-service (own DB per deployable)                                                              | Rejected for this artifact; documented as production path | Would require abandoning the transactional outbox (losing exactly-once) **or** an event-carried-state-transfer rebuild — out of scope for a synthetic lab artifact. Production path: per-service Postgres schemas + roles, GRANTs scoped to the contract tables (§5.3) |
+| Synchronous REST/gRPC between services                                                                           | Rejected                                                  | Couples availability and latency; the hot path is built to commit offsets without waiting downstream — sync calls would throw that away                                                                                                                                |
+| Service mesh / saga orchestrator                                                                                 | Rejected                                                  | No distributed write transaction exists to coordinate (the outbox + idempotent consumers already give exactly-once); a mesh is pure overhead on an 8GB lab host                                                                                                        |
 
 ---
 
@@ -219,8 +222,8 @@ transactional producer; alert-service = VT consumer + platform-pool JDBC; triage
   access**, not physical DB isolation. Anyone reading this expecting textbook DB-per-service should
   read §4 row 5 and §5.3 first — it is a deliberate decision, not an omission.
 - **Operational footprint grows.** Four deployables, four health surfaces, four consumer lags to
-  watch. On the 8GB lab host the full topology is not meant to run alongside load benchmarks
-  (same constraint ADR-15 already noted for triage).
+  watch. On the 8GB lab host the full topology is not meant to run alongside load benchmarks (same constraint ADR-15
+  already noted for triage).
 - **Schema duplication.** The alert contract is declared in three places (detection's
   `AlertMessage`, triage's `PaymentAlert`, and now alert-service's own copy). This is the
   intended cost of decoupling — additive evolution + `schema_version` keeps them compatible
@@ -245,6 +248,7 @@ transactional producer; alert-service = VT consumer + platform-pool JDBC; triage
 ## 6. Failure Modes
 
 ### 6.1 A downstream service is down
+
 - **Trigger:** relay, alert-service, or triage offline.
 - **Blast radius:** backlog only. detection keeps ingesting; `outbox` grows (relay down),
   `payment.alerts` lag grows (alert-service down), `payment.alerts.triaged` stalls (triage down).
@@ -253,6 +257,7 @@ transactional producer; alert-service = VT consumer + platform-pool JDBC; triage
   because nothing is dropped to make room.
 
 ### 6.2 Someone tries to split the detection core
+
 - **Trigger:** a PR adds `rpe-velocity-service` or moves a `Detector` out of detection-service.
 - **Blast radius:** would break gate atomicity, ordering, and dedup-last silently.
 - **Detection:** `ADR-17.md` §1 + this ADR §3.1 are the gate; review must
@@ -261,6 +266,7 @@ transactional producer; alert-service = VT consumer + platform-pool JDBC; triage
 - **Mitigation:** non-goal #1 is binding; exceptions require a successor ADR.
 
 ### 6.3 A shared-code "contracts" jar is introduced
+
 - **Trigger:** a PR adds `rpe-common` and points services at it for DTOs.
 - **Blast radius:** silent recoupling; the next schema change forces a lockstep multi-service
   redeploy.
@@ -268,6 +274,7 @@ transactional producer; alert-service = VT consumer + platform-pool JDBC; triage
 - **Mitigation:** non-goal #2 is binding; contracts stay duplicated + versioned.
 
 ### 6.4 Central assumption wrong — the services don't actually deploy independently
+
 - **Trigger:** extracting relay breaks detection's tests because they were entangled.
 - **Blast radius:** the migration stalls at that step (which is why it is sequenced, not big-bang).
 - **Detection:** each extraction step (§7) must leave every other service's `mvn verify` green
@@ -286,82 +293,82 @@ tests (e.g. `scenario6_relayExactlyOnce`) exercise the relay end-to-end and thei
 topology must be re-homed as ownership moves.
 
 - [x] **Stage 0 — Govern.** ADR-17 ACCEPTED; `ADR-17.md` ratified; Architecture Spec
-      Service Topology section; `deploy/docker-compose.services.yml` target topology authored.
+  Service Topology section; `deploy/docker-compose.services.yml` target topology authored.
 - [x] **Stage 0 — Recognize triage.** `rpe-triage-agent` formally counted as service #4 (already
-      extracted under ADR-15; no code move).
+  extracted under ADR-15; no code move).
 - [x] **Stage 1 — Extract `rpe-relay-service`** (cleanest seam, designed for it: ADR-05/06/11).
-      Moved `OutboxRelay`, `AlertPublisher`, `RelayTrigger`/`PostgresNotifyRelayTrigger`,
-      `RelayListenerHealthIndicator`, the `@Qualifier("relay")` transactional producer (→
-      `RelayKafkaConfig`), the `jdbcScheduler` (→ `RelaySchedulerConfig`), the relay slice of
-      `RpeProperties` (→ standalone `RelayProperties`), the `purge_old_records()` schedule; copied
-      `Pii` (no shared code). Relay owns the `outbox` *reader*/status contract; detection keeps the
-      *writer*. Core's in-process `RelayTrigger.signal()` was **removed** (not stubbed): cross-process
-      wakeup is the V4 `pg_notify` trigger — the literal "no-op when relay is extracted" of ADR-05.
-      Relay runs Flyway-disabled (owns no tables; reads the published outbox contract).
-      `scenario6_relayExactlyOnce` re-homed as the relay's own seed-outbox→exactly-once test; core
-      scenarios 1 & 7 re-scoped to assert at the outbox boundary. **Verified:** core `mvn verify`
-      52/52 green with the relay absent; relay `mvn verify` 3/3 green; triage untouched (20/20).
+  Moved `OutboxRelay`, `AlertPublisher`, `RelayTrigger`/`PostgresNotifyRelayTrigger`,
+  `RelayListenerHealthIndicator`, the `@Qualifier("relay")` transactional producer (→
+  `RelayKafkaConfig`), the `jdbcScheduler` (→ `RelaySchedulerConfig`), the relay slice of
+  `RpeProperties` (→ standalone `RelayProperties`), the `purge_old_records()` schedule; copied
+  `Pii` (no shared code). Relay owns the `outbox` *reader*/status contract; detection keeps the *writer*. Core's
+  in-process `RelayTrigger.signal()` was **removed** (not stubbed): cross-process
+  wakeup is the V4 `pg_notify` trigger — the literal "no-op when relay is extracted" of ADR-05.
+  Relay runs Flyway-disabled (owns no tables; reads the published outbox contract).
+  `scenario6_relayExactlyOnce` re-homed as the relay's own seed-outbox→exactly-once test; core
+  scenarios 1 & 7 re-scoped to assert at the outbox boundary. **Verified:** core `mvn verify`
+  52/52 green with the relay absent; relay `mvn verify` 3/3 green; triage untouched (20/20).
 - [x] **Stage 2 — Extract `rpe-alert-service`.** Moved `AlertConsumer` (→ `com.example.rpe.alert.*`)
-      + the `alert*` Kafka factory beans + the DLT producer/recoverer (→ `AlertKafkaConfig`) +
-      `jdbcScheduler` (→ `AlertSchedulerConfig`); alert-service declares its own `AlertMessage`
-      schema copy and owns `processed_alerts` (core V2 migration → alert-service V1, with a separate
-      `flyway_schema_history_alert` history table, mirroring triage). Core's `payment.alerts`
-      consumer + `AlertMessage` import removed from `KafkaConfig`. Re-homed scenarios 2 (dedup) & 4
-      (poison→DLT) as the alert-service's own consumer-level tests; core kept scenarios 1/3/5/7.
-      **Known shared-DB coupling (accepted, §5.2):** `purge_old_records()` (detection's V3) still
-      DELETEs from `processed_alerts`, a table alert-service now owns — a shared retention utility on
-      the shared Postgres, invoked by the relay. Splitting it cleanly is a Stage 6 (DB-per-service)
-      concern. **Verified (clean builds):** core 50/50 (alert + relay absent), alert 5/5, relay 3/3,
-      triage 20/20.
+  + the `alert*` Kafka factory beans + the DLT producer/recoverer (→ `AlertKafkaConfig`) +
+  `jdbcScheduler` (→ `AlertSchedulerConfig`); alert-service declares its own `AlertMessage`
+  schema copy and owns `processed_alerts` (core V2 migration → alert-service V1, with a separate
+  `flyway_schema_history_alert` history table, mirroring triage). Core's `payment.alerts`
+  consumer + `AlertMessage` import removed from `KafkaConfig`. Re-homed scenarios 2 (dedup) & 4 (poison→DLT) as the
+  alert-service's own consumer-level tests; core kept scenarios 1/3/5/7. **Known shared-DB coupling (accepted, §5.2):**
+  `purge_old_records()` (detection's V3) still
+  DELETEs from `processed_alerts`, a table alert-service now owns — a shared retention utility on
+  the shared Postgres, invoked by the relay. Splitting it cleanly is a Stage 6 (DB-per-service)
+  concern. **Verified (clean builds):** core 50/50 (alert + relay absent), alert 5/5, relay 3/3,
+  triage 20/20.
 - [x] **Stage 3 — `rpe-detection-service` is what remains.** The root module's `src/` + `pom.xml`
-      were `git mv`'d into a top-level `rpe-detection-service/` sibling (resolving the deploy compose's
-      `rpe-detection-service` build context); artifactId/name → `rpe-detection-service`; own
-      `Dockerfile` added (EXPOSE 8080, WebFlux). The Java package (`com.example.rpe`) is unchanged, so
-      **zero source edits** — the atomic Lua gate, per-account lanes, and `Detector`s are byte-identical
-      (git tracked every file as a pure rename). The root no longer carries a pom (no reactor
-      aggregation, §3.5); all four services are now symmetric `mvn -f <svc>/pom.xml verify` siblings.
-      It owns Redis + the `outbox` *writer* + the HTTP/actuator surface only. **Verified (clean
-      builds):** detection 50/50, relay 3/3 (peers unaffected — empty `<relativePath/>`, no linkage to
-      the old root pom; alert 5/5 + triage 20/20 unchanged from Stage 2).
+  were `git mv`'d into a top-level `rpe-detection-service/` sibling (resolving the deploy compose's
+  `rpe-detection-service` build context); artifactId/name → `rpe-detection-service`; own
+  `Dockerfile` added (EXPOSE 8080, WebFlux). The Java package (`com.example.rpe`) is unchanged, so **zero source
+  edits** — the atomic Lua gate, per-account lanes, and `Detector`s are byte-identical (git tracked every file as a pure
+  rename). The root no longer carries a pom (no reactor
+  aggregation, §3.5); all four services are now symmetric `mvn -f <svc>/pom.xml verify` siblings.
+  It owns Redis + the `outbox` *writer* + the HTTP/actuator surface only. **Verified (clean
+  builds):** detection 50/50, relay 3/3 (peers unaffected — empty `<relativePath/>`, no linkage to
+  the old root pom; alert 5/5 + triage 20/20 unchanged from Stage 2).
 - [x] **Stage 4 — Contract tests + ArchUnit guards.** Per-consumer additive-evolution contract
-      tests: `PaymentEventContractTest` (detection / `payment.events`), `AlertMessageContractTest`
-      (alert-service / `payment.alerts`), `PaymentAlertContractTest` (triage / `payment.alerts`) —
-      each asserts unknown-field tolerance (`@JsonIgnoreProperties`, ADR-11) + optional-field default,
-      using the Jackson 2 mapper that mirrors Spring Kafka's `JsonDeserializer`. ArchUnit
-      `noCrossServicePackageDependencies()` added to all four services (anchored package markers —
-      `com.example.rpe.consumer..` etc. — to avoid colliding with siblings' own `consumer`/`config`
-      subpackages); detection adds `detectorImplementationsResideOnlyInDetectionPackage()` — the
-      Lua-gate/`Detector`-set confinement guard with real subjects (the three `Detector`s) that fails
-      the moment a rule is relocated toward extraction (§6.2). Triage gained its first ArchTest
-      (archunit dep added), bringing it to sibling parity. **Verified (clean builds):** detection
-      55/55, alert 9/9, relay 4/4, triage 27/27.
+  tests: `PaymentEventContractTest` (detection / `payment.events`), `AlertMessageContractTest`
+  (alert-service / `payment.alerts`), `PaymentAlertContractTest` (triage / `payment.alerts`) —
+  each asserts unknown-field tolerance (`@JsonIgnoreProperties`, ADR-11) + optional-field default,
+  using the Jackson 2 mapper that mirrors Spring Kafka's `JsonDeserializer`. ArchUnit
+  `noCrossServicePackageDependencies()` added to all four services (anchored package markers —
+  `com.example.rpe.consumer..` etc. — to avoid colliding with siblings' own `consumer`/`config`
+  subpackages); detection adds `detectorImplementationsResideOnlyInDetectionPackage()` — the
+  Lua-gate/`Detector`-set confinement guard with real subjects (the three `Detector`s) that fails
+  the moment a rule is relocated toward extraction (§6.2). Triage gained its first ArchTest (archunit dep added),
+  bringing it to sibling parity. **Verified (clean builds):** detection
+  55/55, alert 9/9, relay 4/4, triage 27/27.
 - [x] **Stage 5 — Flip deployment.** `deploy/docker-compose.services.yml` is now the canonical
-      four-service topology (header reworded from "TARGET" to "CANONICAL"; all build contexts exist).
-      It mounts a dedicated `monitoring/prometheus.services.yml` that scrapes all four services by
-      container DNS (`rpe-detection-service:8080`, `rpe-relay-service:8082`, `rpe-alert-service:8083`,
-      `rpe-triage-agent:8081`) — closing the deploy/README "not yet wired" follow-up for relay/alert
-      scrape targets. The root `docker-compose.yml` is retained and explicitly re-labeled the
-      all-in-one **dev convenience** (infra + detection-on-host via `mvn` + triage profile; keeps its
-      host-oriented `monitoring/prometheus.yml`). **Verified:** `docker compose --env-file .env -f
+  four-service topology (header reworded from "TARGET" to "CANONICAL"; all build contexts exist).
+  It mounts a dedicated `monitoring/prometheus.services.yml` that scrapes all four services by
+  container DNS (`rpe-detection-service:8080`, `rpe-relay-service:8082`, `rpe-alert-service:8083`,
+  `rpe-triage-agent:8081`) — closing the deploy/README "not yet wired" follow-up for relay/alert
+  scrape targets. The root `docker-compose.yml` is retained and explicitly re-labeled the
+  all-in-one **dev convenience** (infra + detection-on-host via `mvn` + triage profile; keeps its
+  host-oriented `monitoring/prometheus.yml`). **Verified:** `docker compose --env-file .env -f
       deploy/docker-compose.services.yml config` renders valid; the canonical Prometheus mount and all
-      four service targets resolve.
+  four service targets resolve.
 - [x] **Stage 6 — Kubernetes canonical topology with DB isolation + observability.**
-      `deploy/k8s/` delivers: CNPG v1.29.1 HA cluster (2-instance; `rpe-pg-1` primary + hot standby);
-      per-service Postgres schemas (`detection`, `alert`, `triage`) with login roles (`detection_role`,
-      `relay_role`, `alert_role`, `triage_role`); schema ownership + `search_path` via bootstrap Job
-      (`12-bootstrap-grants.yaml`); post-Flyway column-level tightening (`13-post-flyway-grants.yaml`:
-      relay restricted to `GRANT UPDATE(status,attempts)` on `detection.outbox`); Flyway scoped to owning
-      schema per service (`schemas:`, separate `flyway_schema_history_*` tables); per-service
-      `kubernetes.io/basic-auth` Secrets; purge split to owning services (`OutboxBatchWriter.purgeOutbox`
-      in detection, `ProcessedAlertsPurge.purge` in alert — relay role has no DELETE). Kubernetes
-      topology: Redpanda + Redis infra; four service Deployments with `imagePullPolicy: Never` (OrbStack);
-      default-deny NetworkPolicies with per-service egress/ingress allow-paths (ADR-17 "Kafka-only async"
-      enforced at network layer); OTel Operator + Collector (PII-suppress processor for `account_id`) +
-      Tempo + Grafana 12.0.1 + Prometheus (5/5 targets `up`; NodePorts 31003/31090). OTel Java
-      auto-instrumentation annotations in all service manifests (init container injection verified;
-      OrbStack single-node memory constraint prevents co-resident old+new pod during rollout).
-      **Verified e2e in k8s:** velocity alert → `detection.outbox PUBLISHED` → `payment.alerts` →
-      `alert.processed_alerts`; alert UUIDs deterministic across all three service boundaries.
+  `deploy/k8s/` delivers: CNPG v1.29.1 HA cluster (2-instance; `rpe-pg-1` primary + hot standby);
+  per-service Postgres schemas (`detection`, `alert`, `triage`) with login roles (`detection_role`,
+  `relay_role`, `alert_role`, `triage_role`); schema ownership + `search_path` via bootstrap Job
+  (`12-bootstrap-grants.yaml`); post-Flyway column-level tightening (`13-post-flyway-grants.yaml`:
+  relay restricted to `GRANT UPDATE(status,attempts)` on `detection.outbox`); Flyway scoped to owning
+  schema per service (`schemas:`, separate `flyway_schema_history_*` tables); per-service
+  `kubernetes.io/basic-auth` Secrets; purge split to owning services (`OutboxBatchWriter.purgeOutbox`
+  in detection, `ProcessedAlertsPurge.purge` in alert — relay role has no DELETE). Kubernetes
+  topology: Redpanda + Redis infra; four service Deployments with `imagePullPolicy: Never` (OrbStack);
+  default-deny NetworkPolicies with per-service egress/ingress allow-paths (ADR-17 "Kafka-only async"
+  enforced at network layer); OTel Operator + Collector (PII-suppress processor for `account_id`) +
+  Tempo + Grafana 12.0.1 + Prometheus (5/5 targets `up`; NodePorts 31003/31090). OTel Java
+  auto-instrumentation annotations in all service manifests (init container injection verified;
+  OrbStack single-node memory constraint prevents co-resident old+new pod during rollout). **Verified e2e in k8s:**
+  velocity alert → `detection.outbox PUBLISHED` → `payment.alerts` →
+  `alert.processed_alerts`; alert UUIDs deterministic across all three service boundaries.
 
 **Code/config anchors:** module poms (one per service), `application.yml` per service, Flyway
 migrations re-homed to owning service, per-service Dockerfile, `deploy/docker-compose.services.yml`,
@@ -382,19 +389,20 @@ non-trivial.
 
 ## 9. Validating Assumptions
 
-| # | Assumption | Status | What would invalidate it |
-|---|---|---|---|
+| # | Assumption                                                                                        | Status                                                                                   | What would invalidate it                                                                        |
+|---|---------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------|
 | 1 | Relay extracts cleanly via the ADR-05/06/11 seams with no hidden in-process coupling to detection | INFERRED — strongly supported by opaque-payload + per-instance `transactional.id` design | A compile/wiring dependency from `OutboxRelay` into detection internals surfaces during Stage 1 |
-| 2 | Schema-only contracts (no shared jar) keep three copies of the alert schema compatible | VERIFIED in principle — triage already does this with `PaymentAlert` under ADR-11 | A non-additive schema change ships without a contract test catching the break |
-| 3 | The shared-Postgres / single-writer-per-table model is sufficient isolation for the artifact | ACCEPTED trade-off — not a correctness risk, a purity trade-off | A real multi-tenant/regulated deployment needs DB-per-service → take Stage 6 |
-| 4 | Each service can boot and pass tests with all peers absent | INFERRED — true for triage today; to be asserted per service in Stages 1–3 | An extraction step cannot keep peers green → hidden coupling to resolve first |
+| 2 | Schema-only contracts (no shared jar) keep three copies of the alert schema compatible            | VERIFIED in principle — triage already does this with `PaymentAlert` under ADR-11        | A non-additive schema change ships without a contract test catching the break                   |
+| 3 | The shared-Postgres / single-writer-per-table model is sufficient isolation for the artifact      | ACCEPTED trade-off — not a correctness risk, a purity trade-off                          | A real multi-tenant/regulated deployment needs DB-per-service → take Stage 6                    |
+| 4 | Each service can boot and pass tests with all peers absent                                        | INFERRED — true for triage today; to be asserted per service in Stages 1–3               | An extraction step cannot keep peers green → hidden coupling to resolve first                   |
 
 ---
 
 ## 10. Open Questions / Followups
 
 - **Cross-service distributed tracing — Stage 6 delivered.** OTel Operator + Collector + Tempo +
-  Grafana deployed in `deploy/k8s/observability/`. Java auto-instrumentation CR (superseded by ADR-25, now archived at `docs/adrs/superseded/52-instrumentation.yaml`)
+  Grafana deployed in `deploy/k8s/observability/`. Java auto-instrumentation CR (superseded by ADR-25, now archived at
+  `docs/adrs/superseded/52-instrumentation.yaml`)
   with PII-suppress processor (`account_id` masked before leaving pod boundary). OrbStack single-node
   memory constraint prevents simultaneous rolling rollout; production path requires `Recreate` or
   higher per-node memory. Correlation via masked `event_id`/`account_id` + deterministic `alert_id`
@@ -412,6 +420,6 @@ non-trivial.
 
 ## Changelog
 
-| Date | Version | Author | Change |
-|---|---|---|---|
-| 2026-06-17 | 1.0.0 | amit | Initial — ACCEPTED. Four-service decomposition along correctness-safe seams; ratifies the microservices decomposition rules. |
+| Date       | Version | Author | Change                                                                                                                       |
+|------------|---------|--------|------------------------------------------------------------------------------------------------------------------------------|
+| 2026-06-17 | 1.0.0   | amit   | Initial — ACCEPTED. Four-service decomposition along correctness-safe seams; ratifies the microservices decomposition rules. |

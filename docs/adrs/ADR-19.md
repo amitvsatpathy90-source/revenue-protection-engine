@@ -8,7 +8,7 @@ last_updated: 2026-06-28
 status: ACCEPTED
 reversal_cost: LOW
 owner: amit
-tags: [security, zero-trust, actuator, oauth2, resource-server, jwt, prometheus, adr-17-follow-on]
+tags: [ security, zero-trust, actuator, oauth2, resource-server, jwt, prometheus, adr-17-follow-on ]
 ---
 
 # ADR-19 — Zero-trust posture: Kafka/network is the trust boundary; the Actuator surface is authenticated via OAuth2 Resource Server
@@ -55,9 +55,9 @@ requires that **reachability ≠ authorization** even for an internal Prometheus
    `alert_id` (ADR-13), not a new per-service identity.
 
 2. **Authenticate the Actuator surface** in every service as an **OAuth2 Resource Server (JWT)**:
-   - `/actuator/prometheus` requires authority `SCOPE_metrics:scrape` (least privilege).
-   - aggregate `/actuator/health` and `/actuator/info` require `authenticated`.
-   - everything else is `denyAll` (no business surface exists).
+    - `/actuator/prometheus` requires authority `SCOPE_metrics:scrape` (least privilege).
+    - aggregate `/actuator/health` and `/actuator/info` require `authenticated`.
+    - everything else is `denyAll` (no business surface exists).
 
 3. **Liveness/readiness public + detail-free.** `/actuator/health/liveness` and
    `/actuator/health/readiness` are `permitAll` (the kubelet cannot present a token);
@@ -65,15 +65,15 @@ requires that **reachability ≠ authorization** even for an internal Prometheus
    unauthenticated.
 
 4. **Fail-closed.** `rpe.security.oauth2.issuer` and `jwk-set-uri` have **no defaults** — a
-   missing env var aborts startup (same discipline as `DB_PASSWORD`). There is deliberately
-   **no `security.enabled` flag**: a toggle is a silent-insecure bypass and violates the
+   missing env var aborts startup (same discipline as `DB_PASSWORD`). There is deliberately **no `security.enabled`
+   flag**: a toggle is a silent-insecure bypass and violates the
    no-feature-flags rule (the reactive pipeline rules).
 
 5. **Audience binding is mandatory** (`AudienceValidator`) — closes the OAuth2 confused-deputy
    hole (a signature-valid token minted for another relying party must not be accepted).
 
-6. **Per-service config class**, gated `@ConditionalOnWebApplication` — reactive
-   (`SecurityWebFilterChain`) for `rpe-detection-service`, servlet (`SecurityFilterChain`) for
+6. **Per-service config class**, gated `@ConditionalOnWebApplication` — reactive (`SecurityWebFilterChain`) for
+   `rpe-detection-service`, servlet (`SecurityFilterChain`) for
    the three MVC services. No shared `rpe-common` jar (ADR-17 non-goal #2); the class is
    duplicated like `Pii`. The conditional keeps the fail-closed decoder out of the
    `webEnvironment = NONE` integration contexts so every suite still loads.
@@ -88,50 +88,58 @@ requires that **reachability ≠ authorization** even for an internal Prometheus
 
 ## Alternatives Considered
 
-| Option | Chosen / Rejected | Reason |
-|---|---|---|
-| Leave Actuator open; rely on NetworkPolicy only | Rejected | Single network layer; violates "never trust the network". |
-| `spring.security.user` basic auth | Rejected | Shared static credential; no audience/scope/rotation; not token-based. |
-| User JWT on a business REST endpoint | N/A | No business HTTP endpoint exists (Kafka-only ingestion). |
-| Separate `management.server.port` + secured child context | Deferred | Reactive child-context security is fragile/version-sensitive; chose same-port + NetworkPolicy. Separate port noted as future hardening. |
-| `security.enabled` dev toggle | Rejected | Silent-insecure bypass; violates no-feature-flags rule. Dev points at a local issuer instead. |
-| Skip audience validation (issuer + signature only) | Rejected | Leaves the confused-deputy hole open — any valid-issuer token would pass. |
+| Option                                                    | Chosen / Rejected | Reason                                                                                                                                  |
+|-----------------------------------------------------------|-------------------|-----------------------------------------------------------------------------------------------------------------------------------------|
+| Leave Actuator open; rely on NetworkPolicy only           | Rejected          | Single network layer; violates "never trust the network".                                                                               |
+| `spring.security.user` basic auth                         | Rejected          | Shared static credential; no audience/scope/rotation; not token-based.                                                                  |
+| User JWT on a business REST endpoint                      | N/A               | No business HTTP endpoint exists (Kafka-only ingestion).                                                                                |
+| Separate `management.server.port` + secured child context | Deferred          | Reactive child-context security is fragile/version-sensitive; chose same-port + NetworkPolicy. Separate port noted as future hardening. |
+| `security.enabled` dev toggle                             | Rejected          | Silent-insecure bypass; violates no-feature-flags rule. Dev points at a local issuer instead.                                           |
+| Skip audience validation (issuer + signature only)        | Rejected          | Leaves the confused-deputy hole open — any valid-issuer token would pass.                                                               |
 
 ---
 
 ## Consequences
 
 **Positive:**
+
 - The management surface is authenticated and scope-scoped; component health no longer leaks unauthenticated.
-- Posture is identical in monolith and microservice form — each service already self-authenticates; extraction changes nothing.
+- Posture is identical in monolith and microservice form — each service already self-authenticates; extraction changes
+  nothing.
 - Ready to extend to a real external API later (`hasAuthority`/method security) with zero boundary rework.
 
 **Negative:**
+
 - Boot now depends on JWKS reachability (fail-closed). An IdP outage blocks fresh starts.
 - +1 config class + 1 validator per service to keep behaviorally in sync (pinned by the actuator security rules).
-- The canonical compose / k8s topologies now require `RPE_OAUTH_ISSUER` + `RPE_OAUTH_JWKS_URI` to be wired (a local Keycloak or static JWKS) — services will not boot otherwise. Tracked as a follow-up infra task.
+- The canonical compose / k8s topologies now require `RPE_OAUTH_ISSUER` + `RPE_OAUTH_JWKS_URI` to be wired (a local
+  Keycloak or static JWKS) — services will not boot otherwise. Tracked as a follow-up infra task.
 
 ---
 
 ## Failure Modes
 
-| Failure | Detection / Mitigation |
-|---|---|
-| IdP/JWKS down at boot | Fail-closed (service refuses to start). Mitigate with HA IdP, cached JWKS, bounded 2s timeout (fails fast). Lab may pin a static JWKS. |
-| JWKS key rotation mid-run | Nimbus refetches on unknown `kid`; bounded timeout prevents a hung refresh. Overlap-publish old+new keys during rotation. |
-| Confused-deputy (valid-issuer token, wrong audience) | Rejected by `AudienceValidator` (unit-tested). |
-| Bearer token theft | Blast radius bounded to read-only `metrics:scrape` + this audience; short TTL. Recommend mesh mTLS as a second factor (residual R2). |
-| `show-details: always` regression | actuator security rule + follow-up integration assertion that unauthenticated `/actuator/health` is detail-free. |
-| Prometheus token expired/missing | Scrape returns 401 → target flips `down` → existing target-up alert fires (observable, not silent). |
+| Failure                                              | Detection / Mitigation                                                                                                                 |
+|------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------|
+| IdP/JWKS down at boot                                | Fail-closed (service refuses to start). Mitigate with HA IdP, cached JWKS, bounded 2s timeout (fails fast). Lab may pin a static JWKS. |
+| JWKS key rotation mid-run                            | Nimbus refetches on unknown `kid`; bounded timeout prevents a hung refresh. Overlap-publish old+new keys during rotation.              |
+| Confused-deputy (valid-issuer token, wrong audience) | Rejected by `AudienceValidator` (unit-tested).                                                                                         |
+| Bearer token theft                                   | Blast radius bounded to read-only `metrics:scrape` + this audience; short TTL. Recommend mesh mTLS as a second factor (residual R2).   |
+| `show-details: always` regression                    | actuator security rule + follow-up integration assertion that unauthenticated `/actuator/health` is detail-free.                       |
+| Prometheus token expired/missing                     | Scrape returns 401 → target flips `down` → existing target-up alert fires (observable, not silent).                                    |
 
 ---
 
 ## Residual Risks (explicit)
 
-- **R1 — Liveness/readiness unauthenticated.** Mitigation: detail-free (UP/DOWN), NetworkPolicy-scoped. Residual: existence/up-down observable to anyone on the pod network.
-- **R2 — Bearer token theft / no mTLS yet.** Mitigation: short TTL, audience+scope binding, read-only scope. Residual: recommend mesh/ingress mTLS as a second factor.
-- **R3 — Lab static scrape token is long-lived.** Residual: prod must switch to client-credentials; the lab token must stay out of git (`.env`).
-- **R4 — Kafka transport not authenticated here.** Broker SASL/mTLS + topic ACLs are the broker's concern (next ADR). Residual until broker auth is configured — this ADR secures the HTTP surface only.
+- **R1 — Liveness/readiness unauthenticated.** Mitigation: detail-free (UP/DOWN), NetworkPolicy-scoped. Residual:
+  existence/up-down observable to anyone on the pod network.
+- **R2 — Bearer token theft / no mTLS yet.** Mitigation: short TTL, audience+scope binding, read-only scope. Residual:
+  recommend mesh/ingress mTLS as a second factor.
+- **R3 — Lab static scrape token is long-lived.** Residual: prod must switch to client-credentials; the lab token must
+  stay out of git (`.env`).
+- **R4 — Kafka transport not authenticated here.** Broker SASL/mTLS + topic ACLs are the broker's concern (next ADR).
+  Residual until broker auth is configured — this ADR secures the HTTP surface only.
 - **R5 — IdP single point of failure at boot** (fail-closed). Mitigation: HA IdP / cached JWKS.
 
 ---
@@ -154,6 +162,6 @@ requires that **reachability ≠ authorization** even for an internal Prometheus
 
 ## Changelog
 
-| Version | Date | Author | Description |
-|---|---|---|---|
-| 1.0.0 | 2026-06-28 | @amit | Initial — ACCEPTED. Establishes zero-trust Actuator security via OAuth2 Resource Server (JWT), enforcing fail-closed boot, audience validation, and scope-restricted Prometheus scrapes. |
+| Version | Date       | Author | Description                                                                                                                                                                              |
+|---------|------------|--------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0.0   | 2026-06-28 | @amit  | Initial — ACCEPTED. Establishes zero-trust Actuator security via OAuth2 Resource Server (JWT), enforcing fail-closed boot, audience validation, and scope-restricted Prometheus scrapes. |

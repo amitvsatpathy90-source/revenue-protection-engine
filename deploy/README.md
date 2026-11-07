@@ -1,22 +1,21 @@
 # `deploy/` — RPE microservices deployment topology (ADR-17)
 
 This directory holds the **canonical** deployment topology for RPE as four independently
-deployable services — the topology the ADR-17 §7 strangler extraction converged on
-(Stages 1–5 complete).
+deployable services — the topology the ADR-17 §7 strangler extraction converged on (Stages 1–5 complete).
 
-- **Decision:** [`docs/adrs/ADR-17.md`](../docs/adrs/ADR-17.md)
-- **Rules:** [`ADR-17.md`](ADR-17.md)
+- **Decision:** [`ADR-17.md`](../docs/adrs/ADR-17.md)
 - **Topology file:** [`docker-compose.services.yml`](docker-compose.services.yml)
-- **`k8s/` is frozen** — delivered Stage-6 exhibit, not maintained; cloud canonical is ECS (`chaosforge-infra/rpe/`). See [`k8s/README.md`](k8s/README.md)
+- **`k8s/` is frozen** — delivered Stage-6 exhibit, not maintained; cloud canonical is ECS (`chaosforge-infra/rpe/`).
+  See [`k8s/README.md`](k8s/README.md)
 
 ## Services
 
-| Service | Port | Bounded context | Sole writer of | Build context |
-|---|---|---|---|---|
-| `rpe-detection-service` | 8080 | Ingest + atomic Lua gate + Detectors + outbox **writer** + HTTP surface | all Redis keys; `outbox` rows | ``rpe-detection-service`` ✅ exists (Stage 3) |
-| `rpe-relay-service` | 8082 | `outbox` → `payment.alerts`, Kafka-transactional, exactly-once | `outbox` **status** only | `../rpe-relay-service` ✅ exists (Stage 1) |
-| `rpe-alert-service` | 8083 | `payment.alerts` → `processed_alerts`, idempotent | `processed_alerts` | `../rpe-alert-service` ✅ exists (Stage 2) |
-| `rpe-triage-agent` | 8081 | Advisory LLM enrichment → `payment.alerts.triaged` | `triaged_alerts` | `../rpe-triage-agent` ✅ exists |
+| Service                 | Port | Bounded context                                                                                | Sole writer of                | Build context                                  |
+|-------------------------|------|------------------------------------------------------------------------------------------------|-------------------------------|------------------------------------------------|
+| `rpe-detection-service` | 8080 | Ingest + atomic Lua gate + Detectors + outbox **writer** + HTTP surface                        | all Redis keys; `outbox` rows | `../rpe-detection-service` ✅ exists (Stage 3) |
+| `rpe-relay-service`     | 8082 | `outbox` → `payment.alerts`, Kafka-transactional, exactly-once realized at consumers via dedup | `outbox` **status** only      | `../rpe-relay-service` ✅ exists (Stage 1)     |
+| `rpe-alert-service`     | 8083 | `payment.alerts` → `processed_alerts`, idempotent                                              | `processed_alerts`            | `../rpe-alert-service` ✅ exists (Stage 2)     |
+| `rpe-triage-agent`      | 8081 | Advisory LLM enrichment → `payment.alerts.triaged`                                             | `triaged_alerts`              | `../rpe-triage-agent` ✅ exists                |
 
 All four services are extracted sibling modules (ADR-17 §7 Stages 1–5 complete: extraction,
 contract/ArchUnit guards, and this compose as the canonical topology). The repo root carries
@@ -67,8 +66,8 @@ Postgres schema + role with GRANTs scoped to the contract columns (ADR-17 §5.3)
 
 ```sql
 -- illustrative production grants (not applied in the lab artifact)
-GRANT SELECT, UPDATE (status, attempts) ON outbox            TO relay_role;
-GRANT SELECT                            ON processed_alerts   TO triage_role;
+GRANT SELECT, UPDATE (status, attempts) ON outbox TO relay_role;
+GRANT SELECT ON processed_alerts TO triage_role;
 ```
 
 ## Observability
@@ -77,15 +76,15 @@ This canonical compose mounts [`../monitoring/prometheus.services.yml`](../monit
 which scrapes all four services by container DNS (`rpe-detection-service:8080`, `rpe-relay-service:8082`,
 `rpe-alert-service:8083`, `rpe-triage-agent:8081`). The repo-root dev compose keeps the host-oriented
 [`../monitoring/prometheus.yml`](../monitoring/prometheus.yml) (detection on host at `host.docker.internal:8080`).
-Each service exposes its own `/actuator/prometheus`; aggregation is at the scrape layer, not in-app
-(ADR-17 §6). No metric may carry `account_id` or any PII / high-cardinality tag (per internal observability rules).
+Each service exposes its own `/actuator/prometheus`; aggregation is at the scrape layer, not in-app (ADR-17 §6). No
+metric may carry `account_id` or any PII / high-cardinality tag (per internal observability rules).
 
 ## Scripts
 
 - [`scripts/generate-rag-corpus-embeddings.sh`](scripts/generate-rag-corpus-embeddings.sh) —
   one-time operator tool (ADR-30). Generates OpenAI embeddings for the hand-authored RAG corpus;
-  output is pasted into `rpe-triage-agent/src/main/resources/db.migration/V3__seed_triage_rag_corpus.sql`.
-  **Not run automatically, not part of `mvn verify`/CI** — same class as `kafka/dlt-redrive.sh`.
+  output is pasted into `rpe-triage-agent/src/main/resources/db/migration/V3__seed_triage_rag_corpus.sql`. **Not run
+  automatically, not part of `mvn verify`/CI** — same class as `kafka/dlt-redrive.sh`.
   Requires `curl`, `jq`, a real `SPRING_AI_OPENAI_API_KEY`.
 
 ## Follow-ups

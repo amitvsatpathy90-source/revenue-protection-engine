@@ -8,7 +8,7 @@ last_updated: 2026-06-29
 status: ACCEPTED
 reversal_cost: MEDIUM
 owner: amit
-tags: [lifecycle, graceful-shutdown, smartlifecycle, kafka, virtual-threads, observability, kubernetes]
+tags: [ lifecycle, graceful-shutdown, smartlifecycle, kafka, virtual-threads, observability, kubernetes ]
 ---
 
 # ADR-22 — Coordinated graceful shutdown: SmartLifecycle phase ordering, bounded per-service drains, readiness-flip + observability
@@ -18,8 +18,8 @@ tags: [lifecycle, graceful-shutdown, smartlifecycle, kafka, virtual-threads, obs
 `ACCEPTED`
 
 Supersedes: nothing.
-Related: ADR-01 (runtime surface split — each service drains the thread model it owns), ADR-02
-(CB buffer loss ≠ data loss; uncommitted offsets redeliver), ADR-05/06 (relay loop + transactional
+Related: ADR-01 (runtime surface split — each service drains the thread model it owns), ADR-02 (CB buffer loss ≠ data
+loss; uncommitted offsets redeliver), ADR-05/06 (relay loop + transactional
 producer), ADR-09 (partition-scoped lane drain on rebalance — the per-rebalance analogue of this
 per-process drain), ADR-12 (50ms outbox loss window), ADR-13 (deterministic alert_id makes replay
 safe), ADR-17 (independent deployability), ADR-19 (readiness probe surface),
@@ -44,8 +44,8 @@ each service tore down its threads in an accidental, partially-inverted order:
   SIGKILL, no endpoint-deregistration window.
 
 A literal "wait for everything" is wrong (unbounded), and a single `@PreDestroy` per bean cannot
-express the cross-bean **ordering** that loss-free draining requires. The correct shape is a
-*coordinated, phase-ordered, bounded* drain: stop ingesting first, then drain in-flight work, then
+express the cross-bean **ordering** that loss-free draining requires. The correct shape is a *coordinated,
+phase-ordered, bounded* drain: stop ingesting first, then drain in-flight work, then
 flush the sink, then close the pools — each step bounded, each step observable.
 
 ## Decision
@@ -71,8 +71,9 @@ This makes the invariant **stop ingest → drain in-flight → flush sink → cl
 and fixes the flush-before-drain race by construction (FLUSH stops strictly after DRAIN).
 
 **2. Per-service bounded drains.**
-- *Detection:* `LaneDrainLifecycle` (DRAIN, 5s) drains every live lane preserving per-account order
-  (single-threaded lanes finish their queued tasks before terminating). `OutboxBatchWriter` becomes
+
+- *Detection:* `LaneDrainLifecycle` (DRAIN, 5s) drains every live lane preserving per-account order (single-threaded
+  lanes finish their queued tasks before terminating). `OutboxBatchWriter` becomes
   a `SmartLifecycle` (FLUSH, 5s) that drain-flushes the whole queue with a **no-progress guard** (a
   Postgres outage re-queues → flat size → break early rather than busy-spin). `SchedulerConfig`
   shuts the JDBC/lane pools at `@PreDestroy` (after the flush).
@@ -100,13 +101,13 @@ structured drain logs. A forced drain is loud, not silent.
 
 ## Alternatives Considered
 
-| Option | Decision | Reason |
-|---|---|---|
-| Leave immediate shutdown (rely on uncommitted offsets + dedup) | Rejected | Correct for *replay safety* but loses the in-flight outbox flush window unnecessarily and tears the relay tx producer down mid-commit; ops gets no drain signal. |
-| One `@PreDestroy` per bean | Rejected | `@PreDestroy` ordering follows bean-dependency, which cannot express "flush only after lanes drain" or "stop the loop before the producer factory dies". The flush-before-drain race is a `@PreDestroy` artifact. |
-| `@PreDestroy`-only, no phases; unbounded waits | Rejected | Unbounded drain blocks SIGKILL; a single hung lane/LLM call stalls the whole shutdown. |
-| Hardcode literal phase numbers | Rejected | Reference `AbstractMessageListenerContainer.DEFAULT_PHASE` so the ordering survives a Spring Kafka version bump that moves the constant. |
-| Keep the relay loop as a raw thread, add a shutdown hook | Rejected | A `Runtime` hook runs outside the Spring lifecycle, after the producer factory may already be destroyed — exactly the bug. A `SmartLifecycle` stops *during* the lifecycle, before bean destruction. |
+| Option                                                         | Decision | Reason                                                                                                                                                                                                            |
+|----------------------------------------------------------------|----------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Leave immediate shutdown (rely on uncommitted offsets + dedup) | Rejected | Correct for *replay safety* but loses the in-flight outbox flush window unnecessarily and tears the relay tx producer down mid-commit; ops gets no drain signal.                                                  |
+| One `@PreDestroy` per bean                                     | Rejected | `@PreDestroy` ordering follows bean-dependency, which cannot express "flush only after lanes drain" or "stop the loop before the producer factory dies". The flush-before-drain race is a `@PreDestroy` artifact. |
+| `@PreDestroy`-only, no phases; unbounded waits                 | Rejected | Unbounded drain blocks SIGKILL; a single hung lane/LLM call stalls the whole shutdown.                                                                                                                            |
+| Hardcode literal phase numbers                                 | Rejected | Reference `AbstractMessageListenerContainer.DEFAULT_PHASE` so the ordering survives a Spring Kafka version bump that moves the constant.                                                                          |
+| Keep the relay loop as a raw thread, add a shutdown hook       | Rejected | A `Runtime` hook runs outside the Spring lifecycle, after the producer factory may already be destroyed — exactly the bug. A `SmartLifecycle` stops *during* the lifecycle, before bean destruction.              |
 
 ## Consequences
 
@@ -159,6 +160,6 @@ stay. No data-format or topic/contract change, so no cross-service coordination 
 
 ## Changelog
 
-| Version | Date | Author | Description |
-|---|---|---|---|
-| 1.0.0 | 2026-06-29 | @amit | Initial — ACCEPTED. Establishes coordinated graceful shutdown via `SmartLifecycle` phase ordering, bounded per-service drains, readiness-flip, and Kubernetes termination alignment. |
+| Version | Date       | Author | Description                                                                                                                                                                          |
+|---------|------------|--------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0.0   | 2026-06-29 | @amit  | Initial — ACCEPTED. Establishes coordinated graceful shutdown via `SmartLifecycle` phase ordering, bounded per-service drains, readiness-flip, and Kubernetes termination alignment. |

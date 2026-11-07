@@ -8,7 +8,7 @@ last_updated: 2026-06-30
 status: ACCEPTED
 reversal_cost: LOW
 owner: amit
-tags: [observability, tracing, opentelemetry, micrometer, outbox, kafka, w3c-traceparent, spring-boot-4]
+tags: [ observability, tracing, opentelemetry, micrometer, outbox, kafka, w3c-traceparent, spring-boot-4 ]
 ---
 
 # ADR-25 — Distributed tracing: app-level Micrometer Observation, trace-context through the outbox
@@ -32,9 +32,9 @@ Stage 6 stood up the **collector + Tempo + Grafana** and an OTel Operator `Instr
 injects the **OTel Java agent** into each pod. But the application code carried **zero** tracing:
 only `micrometer-registry-prometheus` (metrics) + `context-propagation` (MDC across reactive hops).
 
-The agent-only approach has a fatal blind spot **for this architecture**. RPE's defining seam is the
-**transactional outbox**: detection commits the Kafka offset and writes an `outbox` row, and a
-*separately deployed* relay later reads that row and produces to `payment.alerts`. To the OTel Java
+The agent-only approach has a fatal blind spot **for this architecture**. RPE's defining seam is the **transactional
+outbox**: detection commits the Kafka offset and writes an `outbox` row, and a *separately deployed* relay later reads
+that row and produces to `payment.alerts`. To the OTel Java
 agent, detection's `INSERT INTO outbox` and the relay's `SELECT … FROM outbox` are two **unrelated
 JDBC operations** — it has no notion that the row *continues* a trace. So the agent produces a trace
 that **dies at the outbox** and an unrelated new trace from the relay onward — broken exactly at the
@@ -70,6 +70,7 @@ alert / triage with no manual header handling.
 
 **3. The outbox stitch (the part the agent cannot do).** The durable-queue hop is bridged
 explicitly:
+
 - detection captures the **consume span's** W3C `traceparent`/`tracestate` **on the listener
   thread** (where that span is the active context) and threads them **explicitly** through to the
   `AlertIntent`. The per-account lane is a raw `ThreadPoolExecutor` (ADR-07), so the ThreadLocal
@@ -93,20 +94,20 @@ collector's `attributes/pii-suppress` processor stays as belt-and-suspenders.
 
 ## Alternatives Considered
 
-| Option | Decision | Reason |
-|---|---|---|
-| Keep agent-only (Stage 6 state) | Rejected | Trace dies at the outbox (INSERT and the relay's SELECT look unrelated); k8s-only, untestable in `mvn verify`. The gap this ADR exists to close. |
-| Agent + app-level hybrid | Rejected | Double-instruments Kafka/JDBC; two context sources race. Pick one primary — app-level, because only it controls the outbox seam. |
-| Put `traceparent` in the alert **payload** (not a column) | Rejected | The relay forwards `outbox.payload` byte-identically and never deserializes it (ADR-11); trace metadata is not part of the alert contract. A sidecar column the relay already reads is the right home. |
-| Propagate via a context-wrapped lane executor (ambient) | Rejected | The lane is a per-account raw `ThreadPoolExecutor` created in a Caffeine cache; wrapping every one to carry ThreadLocals is more magic and more overhead than threading two strings explicitly. |
-| Manually inject the stored header in the relay, no restored span | Rejected | The relay would not appear in the trace and the outbox latency would be invisible; restoring the parent span shows the hop as a real edge. |
-| Fail-closed tracing (block on collector down) | Rejected | An observability outage must never stop fraud detection (mirrors ADR-03/24 degrade-never-drop). |
+| Option                                                           | Decision | Reason                                                                                                                                                                                                 |
+|------------------------------------------------------------------|----------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Keep agent-only (Stage 6 state)                                  | Rejected | Trace dies at the outbox (INSERT and the relay's SELECT look unrelated); k8s-only, untestable in `mvn verify`. The gap this ADR exists to close.                                                       |
+| Agent + app-level hybrid                                         | Rejected | Double-instruments Kafka/JDBC; two context sources race. Pick one primary — app-level, because only it controls the outbox seam.                                                                       |
+| Put `traceparent` in the alert **payload** (not a column)        | Rejected | The relay forwards `outbox.payload` byte-identically and never deserializes it (ADR-11); trace metadata is not part of the alert contract. A sidecar column the relay already reads is the right home. |
+| Propagate via a context-wrapped lane executor (ambient)          | Rejected | The lane is a per-account raw `ThreadPoolExecutor` created in a Caffeine cache; wrapping every one to carry ThreadLocals is more magic and more overhead than threading two strings explicitly.        |
+| Manually inject the stored header in the relay, no restored span | Rejected | The relay would not appear in the trace and the outbox latency would be invisible; restoring the parent span shows the hop as a real edge.                                                             |
+| Fail-closed tracing (block on collector down)                    | Rejected | An observability outage must never stop fraud detection (mirrors ADR-03/24 degrade-never-drop).                                                                                                        |
 
 ## Consequences
 
 **Positive:** one continuous trace across the system's hardest seam — `payment.events`
-consume → detect → **outbox (latency visible)** → relay produce → `payment.alerts` → alert actioning
-*and* triage → LLM. Uniform across compose / `mvn verify` / dev / k8s; the stitch is **asserted in
+consume → detect → **outbox (latency visible)** → relay produce → `payment.alerts` → alert actioning *and* triage → LLM.
+Uniform across compose / `mvn verify` / dev / k8s; the stitch is **asserted in
 CI** (detection: the alert row carries a well-formed W3C `traceparent`; relay: the produced
 `payment.alerts` record carries a `traceparent` header in the **same** trace). No new failure mode
 on the hot path (fail-open). Reuses the Stage-6 collector → Tempo → Grafana pipeline unchanged.
@@ -133,8 +134,7 @@ that surface is covered by Spring observation + the manual outbox span.
   to traffic (and consider tail sampling in the collector). The persisted `traceparent` carries the
   sampled flag, so a not-sampled trace still stitches correctly; only export volume changes.
 - **R4 — Span cardinality / PII.** Span attributes must never carry `account_id`/payload (the security discipline);
-  enforced by review + the collector's `attributes/pii-suppress`. New manual spans must keep this bar
-  (`ADR-25.md`).
+  enforced by review + the collector's `attributes/pii-suppress`. New manual spans must keep this bar (`ADR-25.md`).
 - **R5 — Exporter back-pressure.** A wedged collector fills the batch span processor queue; OTel
   drops spans (logged), it does not block. Acceptable — observability degrades, the pipeline does not.
 
@@ -156,12 +156,13 @@ outbox seam stays broken). No topic, payload, or alert-contract change.
 - `RpeIntegrationTest` scenario 9 (alert row carries a W3C traceparent) +
   `RelayServiceIntegrationTest` (produced record carries a same-trace traceparent header) — the CI stitch proofs
 - `deploy/k8s/services/*.yaml` (inject-java removed + `OTEL_EXPORTER_OTLP_ENDPOINT`),
-  `docs/adrs/superseded/52-instrumentation.yaml` (superseded CR — relocated out of the live manifest tree; it injected nothing once the annotations were removed)
-- ADR-17 §7 (Stage 6 observability stack), ADR-11 (outbox contract, additive evolution), ADR-13
-  (deterministic `alert_id`), ADR-15 (triage LLM), ADR-19 (Actuator-only HTTP surface)
+  `docs/adrs/superseded/52-instrumentation.yaml` (superseded CR — relocated out of the live manifest tree; it injected
+  nothing once the annotations were removed)
+- ADR-17 §7 (Stage 6 observability stack), ADR-11 (outbox contract, additive evolution), ADR-13 (deterministic
+  `alert_id`), ADR-15 (triage LLM), ADR-19 (Actuator-only HTTP surface)
 
 ## Changelog
 
-| Version | Date | Author | Description |
-|---|---|---|---|
-| 1.0.0 | 2026-06-30 | @amit | Initial — ACCEPTED. Replaces agent-only tracing with app-level Micrometer Observation, stitching W3C trace context across the transactional outbox via additive schema columns. |
+| Version | Date       | Author | Description                                                                                                                                                                     |
+|---------|------------|--------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0.0   | 2026-06-30 | @amit  | Initial — ACCEPTED. Replaces agent-only tracing with app-level Micrometer Observation, stitching W3C trace context across the transactional outbox via additive schema columns. |

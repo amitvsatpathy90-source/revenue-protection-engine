@@ -8,7 +8,7 @@ last_updated: 2026-06-29
 status: ACCEPTED
 reversal_cost: LOW
 owner: amit
-tags: [kafka, dlt, dead-letter, re-drive, operations, observability, runbook, adr-18-follow-on]
+tags: [ kafka, dlt, dead-letter, re-drive, operations, observability, runbook, adr-18-follow-on ]
 ---
 
 # ADR-23 — DLT operational strategy: operator-gated loop-safe re-drive, per-writer depth SLO alerting, re-process-vs-discard decision tree
@@ -18,8 +18,8 @@ tags: [kafka, dlt, dead-letter, re-drive, operations, observability, runbook, ad
 `ACCEPTED`
 
 Supersedes: nothing.
-Related: ADR-10 (no auto-replay from DLT — this ADR is the human-gated counterpart), ADR-13
-(deterministic UUIDv5 `alert_id` — what makes re-drive idempotent), ADR-17 (single-writer
+Related: ADR-10 (no auto-replay from DLT — this ADR is the human-gated counterpart), ADR-13 (deterministic UUIDv5
+`alert_id` — what makes re-drive idempotent), ADR-17 (single-writer
 ownership), ADR-18 (one DLT per consumer group; the triage DLT owner), ADR-19 (Actuator is the
 only HTTP surface — why re-drive is NOT an endpoint), ADR-20 (least-privilege ACLs),
 ADR-22 (graceful shutdown — the other "narrow the loss window, don't replace durability" story),
@@ -31,8 +31,8 @@ ADR-18 fixed DLT *ownership* (one DLT per consumer group, single-writer). But an
 DLT surface was **write-only with no operational story**:
 
 1. **No re-drive path.** Once a record hit a DLT there was no sanctioned way back. "Replay the DLT"
-   was tribal knowledge — and ADR-10 rightly forbids *automatic* replay, but never defined the
-   *manual* path, the loop-safety, or the decision criteria.
+   was tribal knowledge — and ADR-10 rightly forbids *automatic* replay, but never defined the *manual* path, the
+   loop-safety, or the decision criteria.
 2. **A latent ownership bug.** `rpe-triage-agent`'s `DeadLetterPublishingRecoverer` resolved its
    destination as `record.topic() + ".DLT"` → **`payment.alerts.DLT`**, which is
    `rpe-alert-service`'s sole-writer topic. This directly violated ADR-18 and the Architecture Spec
@@ -64,19 +64,19 @@ tool is **dry-run by default** (`--execute` required to act) and matches the exi
 `provision-acls.sh` operator-script pattern.
 
 **2. Loop-safety via attempt-cap → parking topic.** Each re-driven record carries an
-`x-redrive-attempts` header. At the cap (default 3, `REDRIVE_MAX_ATTEMPTS`) the record is sent to a
-**parking topic** `<dlt>.parked`, **never** back to source. A poison record can therefore cycle at
-most N times, then halts in a quarantine that pages. The tool's DLT→source mapping is a
-**fail-closed allowlist** — an unlisted DLT cannot be re-driven.
+`x-redrive-attempts` header. At the cap (default 3, `REDRIVE_MAX_ATTEMPTS`) the record is sent to a **parking topic**
+`<dlt>.parked`, **never** back to source. A poison record can therefore cycle at
+most N times, then halts in a quarantine that pages. The tool's DLT→source mapping is a **fail-closed allowlist** — an
+unlisted DLT cannot be re-driven.
 
 **3. Re-drive is safe by construction** because every source path already dedups on replay — this
 is why automatic *redelivery* (ADR-02/09/13) was always safe, and re-drive rides the same guards:
 
-| Source topic | Idempotency guard on re-drive |
-|---|---|
-| `payment.events` | detection Lua dedup window + deterministic UUIDv5 `alert_id` (ADR-13) |
-| `payment.alerts` (alert-service) | `processed_alerts` `ON CONFLICT DO NOTHING` (UUIDv5 PK) |
-| `payment.alerts` (triage) | triage inbox `triaged_alerts` `ON CONFLICT DO NOTHING`, before the LLM (ADR-15) |
+| Source topic                     | Idempotency guard on re-drive                                                   |
+|----------------------------------|---------------------------------------------------------------------------------|
+| `payment.events`                 | detection Lua dedup window + deterministic UUIDv5 `alert_id` (ADR-13)           |
+| `payment.alerts` (alert-service) | `processed_alerts` `ON CONFLICT DO NOTHING` (UUIDv5 PK)                         |
+| `payment.alerts` (triage)        | triage inbox `triaged_alerts` `ON CONFLICT DO NOTHING`, before the LLM (ADR-15) |
 
 A re-driven duplicate is absorbed, not double-actioned. The tool preserves the original
 `kafka_dlt-*` failure headers (forensic trail) and only *adds* the re-drive stamp.
@@ -85,11 +85,11 @@ A re-driven duplicate is absorbed, not double-actioned. The tool preserves the o
 DLTs it solely writes** (per-service `DltDepthMetrics` copy — no shared jar, symmetric with
 `Pii`/`KafkaSecurity`/`BoundaryHandler`):
 
-| Service | Monitors |
-|---|---|
-| `rpe-detection-service` | `payment.events.DLT` + `payment.events.DLT.parked` |
-| `rpe-alert-service` | `payment.alerts.DLT` + `payment.alerts.DLT.parked` |
-| `rpe-triage-agent` | `payment.alerts.triage.DLT` + `payment.alerts.triage.DLT.parked` |
+| Service                 | Monitors                                                         |
+|-------------------------|------------------------------------------------------------------|
+| `rpe-detection-service` | `payment.events.DLT` + `payment.events.DLT.parked`               |
+| `rpe-alert-service`     | `payment.alerts.DLT` + `payment.alerts.DLT.parked`               |
+| `rpe-triage-agent`      | `payment.alerts.triage.DLT` + `payment.alerts.triage.DLT.parked` |
 
 This fixes both the coverage gap (triage DLT now monitored) and the boundary smell (detection no
 longer polls a topic it does not own).
@@ -110,14 +110,14 @@ DLTs and WRITE on the sources + parking topics. Unset ⇒ re-drive is simply not
 
 ## Alternatives Considered
 
-| Option | Decision | Reason |
-|---|---|---|
-| In-app re-drive REST endpoint | Rejected | Breaches ADR-19 (Actuator is the only HTTP surface); adds an authenticated mutation API + attack surface for a rare human action. |
-| Always-on DLT-consumer that auto-re-drives | Rejected | Re-introduces the exact poison-loop ADR-10 rejected; unbounded retry of records broken by definition; burns budget; no human in the loop for the fix-vs-discard call. |
-| Re-drive with no attempt cap | Rejected | A genuinely-poison record ping-pongs DLT↔source forever. The cap→parking topic is the single most important safety property of any re-drive tool. |
-| Keep detection polling all DLTs | Rejected | Detection monitoring `payment.alerts.DLT`/`triage.DLT` is a cross-ownership smell; per-writer ownership (microservices decomposition rules §6) is the correct model and was needed anyway to cover the triage DLT. |
-| One shared parking topic | Rejected | Conflates failure domains exactly as ADR-18 rejected for the DLTs themselves; per-DLT parking keeps ownership and retention scoped. |
-| Suffix-derive the triage DLT (`record.topic()+".DLT"`) | Rejected | That **is** the bug — it resolves to another service's sole-writer topic. Pinning to the owned constant is the fix. |
+| Option                                                 | Decision | Reason                                                                                                                                                                                                             |
+|--------------------------------------------------------|----------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| In-app re-drive REST endpoint                          | Rejected | Breaches ADR-19 (Actuator is the only HTTP surface); adds an authenticated mutation API + attack surface for a rare human action.                                                                                  |
+| Always-on DLT-consumer that auto-re-drives             | Rejected | Re-introduces the exact poison-loop ADR-10 rejected; unbounded retry of records broken by definition; burns budget; no human in the loop for the fix-vs-discard call.                                              |
+| Re-drive with no attempt cap                           | Rejected | A genuinely-poison record ping-pongs DLT↔source forever. The cap→parking topic is the single most important safety property of any re-drive tool.                                                                  |
+| Keep detection polling all DLTs                        | Rejected | Detection monitoring `payment.alerts.DLT`/`triage.DLT` is a cross-ownership smell; per-writer ownership (microservices decomposition rules §6) is the correct model and was needed anyway to cover the triage DLT. |
+| One shared parking topic                               | Rejected | Conflates failure domains exactly as ADR-18 rejected for the DLTs themselves; per-DLT parking keeps ownership and retention scoped.                                                                                |
+| Suffix-derive the triage DLT (`record.topic()+".DLT"`) | Rejected | That **is** the bug — it resolves to another service's sole-writer topic. Pinning to the owned constant is the fix.                                                                                                |
 
 ## Consequences
 
@@ -125,8 +125,8 @@ DLTs and WRITE on the sources + parking topics. Unset ⇒ re-drive is simply not
 step bounded and observable. The ADR-18 single-writer invariant is now actually upheld for the
 triage DLT (and test-guarded). Re-drive cannot loop, cannot corrupt (idempotency table per path),
 and cannot run by accident (dry-run default, fail-closed allowlist, optional principal). Depth is
-correctly owned and fully covered; a stuck DLT and an exhausted re-drive both page. All suites green
-(detection 76, relay 5, alert 10, triage **31** — +3 routing tests).
+correctly owned and fully covered; a stuck DLT and an exhausted re-drive both page. All suites green (detection 76,
+relay 5, alert 10, triage **31** — +3 routing tests).
 
 **Negative:** three more topics per environment (`*.DLT.parked`) to declare; two more per-service
 `DltDepthMetrics` copies to keep in sync (no-shared-jar tax); the re-drive script is operator tooling
@@ -168,6 +168,6 @@ strict correctness improvement and would stay regardless. No data-format or cont
 
 ## Changelog
 
-| Version | Date | Author | Description |
-|---|---|---|---|
-| 1.0.0 | 2026-06-29 | @amit | Initial — ACCEPTED. Establishes a DLT operational strategy featuring operator-gated loop-safe re-drive, per-writer depth SLO alerting, and fixed single-writer DLT topic routing. |
+| Version | Date       | Author | Description                                                                                                                                                                       |
+|---------|------------|--------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0.0   | 2026-06-29 | @amit  | Initial — ACCEPTED. Establishes a DLT operational strategy featuring operator-gated loop-safe re-drive, per-writer depth SLO alerting, and fixed single-writer DLT topic routing. |

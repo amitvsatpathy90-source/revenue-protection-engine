@@ -1,8 +1,8 @@
 # rpe-triage-agent
 
 Advisory AI triage downstream of `payment.alerts` — **ADR-15**. Consumes alerts on its
-own `read_committed` group, runs a Resilience4j-bounded Spring AI tool-calling loop
-(max 3 rounds, enforced in code), and produces `{severity, narrative, evidence[],
+own `read_committed` group, runs a Resilience4j-bounded Spring AI tool-calling loop (max 3 rounds, enforced in code),
+and produces `{severity, narrative, evidence[],
 confidence, triage_status}` to `payment.alerts.triaged`.
 
 **The LLM never gates detection, alert identity, or delivery.** Kill the LLM endpoint
@@ -27,15 +27,15 @@ Without `SPRING_AI_OPENAI_API_KEY` the module starts normally and every verdict 
 
 ## Key signals (port 8081)
 
-| Metric | Meaning |
-|---|---|
-| `triage_llm_latency_seconds{provider,outcome}` | Per-call LLM latency; outcome ∈ success/timeout/circuit_open/bulkhead_full/rate_limited/error |
-| `triage_tool_rounds` | Agent loop rounds; saturation at 3 with low confidence = assumption #3 failing (ADR-15 §8) |
-| `triage_verdicts_total{triage_status}` | LLM_TRIAGED vs DEGRADED_RULE_BASED vs PUBLISH_FAILED — alert on fallback rate-of-change |
-| `resilience4j_circuitbreaker_state{name="llm"}` | The §6.1 demo signal: slow provider ⇒ open ⇒ degraded verdicts still flow |
-| `triage_consumer_lag{group}` | Rising lag + open CB = provider degradation pair |
-| `gen_ai_client_token_usage` | Cost signal (Spring AI observation) |
-| `triage_tool_account_mismatch{tool}` | Tool asked for a non-alert account — live injection-attempt signal |
+| Metric                                          | Meaning                                                                                       |
+|-------------------------------------------------|-----------------------------------------------------------------------------------------------|
+| `triage_llm_latency_seconds{provider,outcome}`  | Per-call LLM latency; outcome ∈ success/timeout/circuit_open/bulkhead_full/rate_limited/error |
+| `triage_tool_rounds`                            | Agent loop rounds; saturation at 3 with low confidence = assumption #3 failing (ADR-15 §8)    |
+| `triage_verdicts_total{triage_status}`          | LLM_TRIAGED vs DEGRADED_RULE_BASED vs PUBLISH_FAILED — alert on fallback rate-of-change       |
+| `resilience4j_circuitbreaker_state{name="llm"}` | The §6.1 demo signal: slow provider ⇒ open ⇒ degraded verdicts still flow                     |
+| `triage_consumer_lag{group}`                    | Rising lag + open CB = provider degradation pair                                              |
+| `gen_ai_client_token_usage`                     | Cost signal (Spring AI observation)                                                           |
+| `triage_tool_account_mismatch{tool}`            | Tool asked for a non-alert account — live injection-attempt signal                            |
 
 ```bash
 curl -s http://localhost:8081/actuator/prometheus | grep -E "resilience4j_circuitbreaker_state|gen_ai"
