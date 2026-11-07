@@ -18,7 +18,7 @@ RAG retrieval-selection evaluation (test scope; no runtime behavior change):
   Single templated corpus, one seed, non-prod embeddings, no faithfulness measurement. No runtime change.
 - **ADR-30 v1.4.0 (PROPOSED):** evaluation findings recorded; placeholder-gate proposal (D2) superseded and never
   implemented; v1 retrieval decided as exact `rule_name` lookup (D3), implementation pending a later runtime release.
-- Triage tests: 52 (1 env-gated RAG eval, skipped by default), measured 2026-11-05.
+- Triage tests: 52 (1 env-gated RAG eval, skipped by default), measured 2026-11-07.
 
 ## v1.17 — 2026-09-11
 
