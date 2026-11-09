@@ -1,10 +1,9 @@
 package io.rpe.triage.service;
 
+import io.rpe.triage.agent.LlmResilience;
+import io.rpe.triage.agent.RagRetrievalClient;
 import io.rpe.triage.agent.TriageAgent;
 import io.rpe.triage.agent.TriageAgentException;
-import io.rpe.triage.agent.LlmResilience;
-import io.rpe.triage.agent.RagEmbeddingClient;
-import io.rpe.triage.agent.RagRetrievalClient;
 import io.rpe.triage.config.TriageProperties;
 import io.rpe.triage.domain.PaymentAlert;
 import io.rpe.triage.domain.TriagedAlertMessage;
@@ -49,7 +48,6 @@ public class TriageService {
     private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
     private final TriageProperties props;
-    private final RagEmbeddingClient ragEmbeddingClient;
     private final RagRetrievalClient ragRetrievalClient;
     private final LlmResilience llmResilience;
 
@@ -61,7 +59,6 @@ public class TriageService {
             ObjectMapper objectMapper,
             MeterRegistry meterRegistry,
             TriageProperties props,
-            RagEmbeddingClient ragEmbeddingClient,
             RagRetrievalClient ragRetrievalClient,
             LlmResilience llmResilience) {
         this.inbox = inbox;
@@ -71,7 +68,6 @@ public class TriageService {
         this.objectMapper = objectMapper;
         this.meterRegistry = meterRegistry;
         this.props = props;
-        this.ragEmbeddingClient = ragEmbeddingClient;
         this.ragRetrievalClient = ragRetrievalClient;
         this.llmResilience = llmResilience;
     }
@@ -129,34 +125,21 @@ public class TriageService {
     }
 
     /**
-     * Best-effort RAG augmentation — any failure degrades to no context, never
-     * to triage failure. Unconditional skip when the chat CB is open: an
-     * embedding + JDBC round trip is wasted if the call it feeds can't happen.
+     * Best-effort RAG (ADR-30 D3: exact rule_name lookup, no embedding call).
+     * Skipped unconditionally when the chat CB is open.
      */
     private List<RetrievedChunk> fetchRagContext(PaymentAlert alert) {
         if (llmResilience.circuitBreaker().getState() == CircuitBreaker.State.OPEN) {
             return List.of();
         }
         try {
-            String queryText = buildFixedFieldQuery(alert);
-            float[] queryVector = ragEmbeddingClient.embed(queryText);
-            return ragRetrievalClient.retrieve(
-                    queryVector,
-                    props.rag().retrieval().topK(),
-                    props.rag().retrieval().similarityThreshold());
+            // Fixed-field key only, never raw alert free-text (ADR-30).
+            return ragRetrievalClient.retrieveByRule(alert.ruleName(), props.rag().retrieval().topK());
         } catch (TriageAgentException e) {
+            // RAG failure degrades to unaugmented, never fails triage
             log.debug("RAG context unavailable, proceeding unaugmented alertId={}: {}",
                     alert.alertId(), e.getMessage());
             return List.of();
         }
-    }
-
-    /**
-     * Fixed-field query only, never raw alert free-text — targeted-retrieval
-     * attack prevention. ruleName is currently the only usable field on
-     * PaymentAlert; do not add others without confirming real accessors first.
-     */
-    private String buildFixedFieldQuery(PaymentAlert alert) {
-        return alert.ruleName();
     }
 }

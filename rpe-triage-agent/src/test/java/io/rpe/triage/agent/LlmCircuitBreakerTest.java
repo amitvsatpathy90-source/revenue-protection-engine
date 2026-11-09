@@ -59,6 +59,7 @@ class LlmCircuitBreakerTest {
 
         // Post-open: must fail fast (circuit-open), NOT wait on the slow provider.
         long startNanos = System.nanoTime();
+
         var probe = new Prompt("probe");
         assertThatThrownBy(() -> client.call(probe))
                 .isInstanceOf(TriageAgentException.class)
@@ -94,14 +95,17 @@ class LlmCircuitBreakerTest {
         var publisher = new TriageTestSupport.CapturingPublisher();
         var service = new TriageService(
                 inbox, agent, new DegradedTriageFallback(props), publisher,
-                TriageTestSupport.objectMapper(), registry, props, null, null, resilience);
+
+                // null retrieval: chat CB open, RAG never reached
+                TriageTestSupport.objectMapper(), registry, props, null, resilience);
 
         service.process(TriageTestSupport.alert("geo"));
 
         assertThat(publisher.published).hasSize(1);
-        TriagedAlertMessage verdict = publisher.published.get(0);
+        TriagedAlertMessage verdict = publisher.published.getFirst();
         assertThat(verdict.triageStatus()).isEqualTo(TriagedAlertMessage.STATUS_DEGRADED_RULE_BASED);
         assertThat(verdict.degradedReason()).isEqualTo("circuit-open");
+
         // geo → HIGH in the static fallback map (verdict still useful with LLM down)
         assertThat(verdict.severity().name()).isEqualTo("HIGH");
     }

@@ -167,8 +167,9 @@ triage:
       retry-max-attempts: 3
       retry-backoff-ms: 500
     retrieval:
-      # No rpm — local JDBC call, not billed.
+      # v1 keyed lookup (ADR-30 D3): LIMIT on the rule_name query
       top-k: 5
+      # Unused on the v1 keyed path; only the dormant similarity path reads it
       similarity-threshold: 0.75
       time-limit-ms: 2000
       slow-call-ms: 1000
