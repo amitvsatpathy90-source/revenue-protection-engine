@@ -10,12 +10,12 @@ deployable services — the topology the ADR-17 §7 strangler extraction converg
 
 ## Services
 
-| Service                 | Port | Bounded context                                                                                | Sole writer of                | Build context                                  |
-|-------------------------|------|------------------------------------------------------------------------------------------------|-------------------------------|------------------------------------------------|
-| `rpe-detection-service` | 8080 | Ingest + atomic Lua gate + Detectors + outbox **writer** + HTTP surface                        | all Redis keys; `outbox` rows | `../rpe-detection-service` ✅ exists (Stage 3) |
-| `rpe-relay-service`     | 8082 | `outbox` → `payment.alerts`, Kafka-transactional, exactly-once realized at consumers via dedup | `outbox` **status** only      | `../rpe-relay-service` ✅ exists (Stage 1)     |
-| `rpe-alert-service`     | 8083 | `payment.alerts` → `processed_alerts`, idempotent                                              | `processed_alerts`            | `../rpe-alert-service` ✅ exists (Stage 2)     |
-| `rpe-triage-agent`      | 8081 | Advisory LLM enrichment → `payment.alerts.triaged`                                             | `triaged_alerts`              | `../rpe-triage-agent` ✅ exists                |
+| Service                 | Port | Bounded context                                                                                | Sole writer of                        | Build context                                  |
+|-------------------------|------|------------------------------------------------------------------------------------------------|---------------------------------------|------------------------------------------------|
+| `rpe-detection-service` | 8080 | Ingest + atomic Lua gate + Detectors + outbox **writer** + HTTP surface                        | all Redis keys; `outbox` rows         | `../rpe-detection-service` ✅ exists (Stage 3) |
+| `rpe-relay-service`     | 8082 | `outbox` → `payment.alerts`, Kafka-transactional, exactly-once realized at consumers via dedup | `outbox` **status** only              | `../rpe-relay-service` ✅ exists (Stage 1)     |
+| `rpe-alert-service`     | 8083 | `payment.alerts` → `processed_alerts`, idempotent                                              | `processed_alerts`                    | `../rpe-alert-service` ✅ exists (Stage 2)     |
+| `rpe-triage-agent`      | 8081 | Advisory LLM enrichment + RAG grounding → `payment.alerts.triaged`                             | `triaged_alerts`, `triage_rag_corpus` | `../rpe-triage-agent` ✅ exists                |
 
 All four services are extracted sibling modules (ADR-17 §7 Stages 1–5 complete: extraction,
 contract/ArchUnit guards, and this compose as the canonical topology). The repo root carries
@@ -82,8 +82,11 @@ metric may carry `account_id` or any PII / high-cardinality tag (per internal ob
 ## Scripts
 
 - [`scripts/generate-rag-corpus-embeddings.sh`](scripts/generate-rag-corpus-embeddings.sh) —
-  one-time operator tool (ADR-30). Generates OpenAI embeddings for the hand-authored RAG corpus;
-  output is pasted into `rpe-triage-agent/src/main/resources/db/migration/V3__seed_triage_rag_corpus.sql`. **Not run
+  one-time operator tool (ADR-30). Generates OpenAI embeddings for the hand-authored RAG corpus.
+  **Not needed on the v1 path:** retrieval is an exact `rule_name` lookup with no embedding call, and
+  V3 (`rpe-triage-agent/src/main/resources/db/migration/V3__seed_triage_rag_corpus.sql`) seeds placeholder
+  vectors. V3 is checksum-immutable, so real vectors would need a new migration, not an edit to V3.
+  Relevant only if a similarity path is enabled. **Not run
   automatically, not part of `mvn verify`/CI** — same class as `kafka/dlt-redrive.sh`.
   Requires `curl`, `jq`, a real `SPRING_AI_OPENAI_API_KEY`.
 
