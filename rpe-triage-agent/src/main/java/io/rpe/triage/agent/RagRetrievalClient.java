@@ -11,8 +11,6 @@ import io.micrometer.core.instrument.Timer;
 import io.rpe.triage.config.BoundaryHandler;
 import io.rpe.triage.rag.TriageVectorRepository;
 import io.rpe.triage.rag.TriageVectorRepository.RetrievedChunk;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
@@ -24,14 +22,18 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
 /**
- * Guarded pgvector retrieval (ADR-29/ADR-30). Independent R4j instance set, no
- * RateLimiter (see {@link RetrievalResilience}). Decorator order: query() →
- * Retry → TimeLimiter → Bulkhead → CircuitBreaker.
+ * Guarded pgvector retrieval (ADR-29/ADR-30).
+ * <p>
+ * Uses an independent Resilience4j instance set without a RateLimiter (see
+ * {@link RetrievalResilience}).
+ * <p>
+ * Decorator order: {@code query() -> Retry -> TimeLimiter -> Bulkhead -> CircuitBreaker}.
+ * <p>
+ * Two entry points, {@code retrieveByRule} (v1) and {@code retrieve} (v2), share
+ * {@code guarded()}.
  */
 @Component
 public class RagRetrievalClient {
-
-    private static final Logger log = LoggerFactory.getLogger(RagRetrievalClient.class);
 
     private final TriageVectorRepository repository;
     private final RetrievalResilience    resilience;
@@ -50,30 +52,51 @@ public class RagRetrievalClient {
     }
 
     /**
-     * Same failure taxonomy as {@link RagEmbeddingClient#embed} minus rate-limit
-     * outcomes (no RateLimiter here) — callers route any failure to "skip RAG,
-     * proceed unaugmented," identically to an embedding failure.
+     * Performs vector similarity retrieval using the supplied query embedding.
+     * Terminal retrieval exceptions are surfaced as TriageAgentException so
+     * callers can skip RAG and proceed without augmentation.
      *
-     * @return retrieved chunks, possibly empty — that's a normal outcome, not a failure
+     * @return retrieved chunks; an empty list is a valid no-match outcome
+     */
+    @SuppressWarnings("UnusedReturnValue") // Dormant: v2 similarity path, no production caller yet
+    public List<RetrievedChunk> retrieve(float[] queryEmbedding, int topK, double similarityThreshold) {
+        return guarded(() -> repository.similaritySearch(queryEmbedding, topK, similarityThreshold));
+    }
+
+    /**
+     * v1 path (ADR-30 D3): exact rule_name lookup, no embedding call.
+     * Same R4j chain and failure mapping as {@link #retrieve}.
+     */
+    public List<RetrievedChunk> retrieveByRule(String ruleName, int limit) {
+        List<RetrievedChunk> chunks = guarded(() -> repository.findByRuleName(ruleName, limit));
+        // Empty = no corpus row; chat-CB skips never reach here
+        if (chunks.isEmpty()) {
+            // Untagged: rule names are message-sourced, a tag is unbounded
+            meterRegistry.counter("triage.rag.retrieval.empty").increment();
+        }
+        return chunks;
+    }
+
+    /**
+     * Shared R4j chain; maps every terminal failure to TriageAgentException.
      */
     @BoundaryHandler("r4j-decorator-boundary: all terminal failures map to TriageAgentException so callers can skip RAG and proceed unaugmented")
-    public List<RetrievedChunk> retrieve(float[] queryEmbedding, int topK, double similarityThreshold) {
-        Supplier<List<RetrievedChunk>> retried = Retry.decorateSupplier(
-                resilience.retry(),
-                () -> repository.similaritySearch(queryEmbedding, topK, similarityThreshold));
+    private List<RetrievedChunk> guarded(Supplier<List<RetrievedChunk>> query) {
+        Supplier<List<RetrievedChunk>> retried = Retry.decorateSupplier(resilience.retry(), query);
 
         Callable<List<RetrievedChunk>> timeLimited = TimeLimiter.decorateFutureSupplier(
                 resilience.timeLimiter(),
                 () -> jdbcExecutor.submit(retried::get));
 
-        Callable<List<RetrievedChunk>> guarded =
+        // CB outermost: open circuit rejects before the bulkhead
+        Callable<List<RetrievedChunk>> decorated =
                 CircuitBreaker.decorateCallable(resilience.circuitBreaker(),
                         Bulkhead.decorateCallable(resilience.bulkhead(), timeLimited));
 
         long start = System.nanoTime();
         String outcome = "success";
         try {
-            return guarded.call();
+            return decorated.call();
         } catch (CallNotPermittedException e) {
             outcome = "circuit_open";
             throw new TriageAgentException("rag-retrieval-circuit-open", e);

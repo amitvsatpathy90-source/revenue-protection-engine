@@ -54,10 +54,10 @@ class TriageServiceReplayTest {
                 .llmResilience(TriageTestSupport.lenientProps(), new SimpleMeterRegistry());
         ragGateClosedOff.circuitBreaker().transitionToOpenState();
 
+        // null retrieval: chat CB open, RAG never reached
         return new TriageService(
                 inbox, agent, new DegradedTriageFallback(props), publisher,
-                objectMapper, registry, props, null, null,
-                ragGateClosedOff);
+                objectMapper, registry, props, null, ragGateClosedOff);
     }
 
     @Test
@@ -77,10 +77,9 @@ class TriageServiceReplayTest {
         assertThat(model.calls.get()).isEqualTo(1);
         // And exactly one verdict published, marked LLM_TRIAGED.
         assertThat(publisher.published).hasSize(1);
-        assertThat(publisher.published.get(0).triageStatus())
+        assertThat(publisher.published.getFirst().triageStatus())
                 .isEqualTo(TriagedAlertMessage.STATUS_LLM_TRIAGED);
-        assertThat(inbox.statusById.get(alert.alertId()))
-                .isEqualTo(TriagedAlertMessage.STATUS_LLM_TRIAGED);
+        assertThat(inbox.statusById).containsEntry(alert.alertId(), TriagedAlertMessage.STATUS_LLM_TRIAGED);
         // Duplicate deliveries are counted, not silently ignored.
         assertThat(registry.counter("triage.inbox.duplicate").count()).isEqualTo(2.0);
     }
@@ -114,7 +113,7 @@ class TriageServiceReplayTest {
         // for the sweep. Never lost, never silently dropped.
         assertThat(model.calls.get()).isEqualTo(1);
         assertThat(publisher.published).isEmpty();
-        assertThat(inbox.statusById.get(alert.alertId())).isEqualTo("PENDING_TRIAGE");
+        assertThat(inbox.statusById).containsEntry(alert.alertId(), "PENDING_TRIAGE");
         assertThat(registry.counter("triage.verdicts", "triage_status", "PUBLISH_FAILED").count())
                 .isEqualTo(1.0);
     }

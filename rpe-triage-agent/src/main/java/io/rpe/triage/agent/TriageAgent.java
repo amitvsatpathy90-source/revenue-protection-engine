@@ -37,14 +37,14 @@ import java.util.stream.Collectors;
  * The agent loop (ADR-15 §3.3): tool SELECTION is the model's; tool EXISTENCE and the
  * round budget are ours.
  *
- * <b>Round budget in code, not prompt:</b> internal tool execution is disabled and the
+ * <p><b>Round budget in code, not prompt:</b> internal tool execution is disabled and the
  * loop below is the only place tools run — {@code for (round = 0; round < MAX_TOOL_ROUNDS)}.
- * Prompt-stated limits are suggestions to an LLM; loop bounds are not.
+ * Prompt-stated limits are suggestions to an LLM; loop bounds are not.</p>
  *
- * <b>Injection containment</b>: the system prompt is a static compiled
+ * <p><b>Injection containment</b>: the system prompt is a static compiled
  * constant; event fields enter ONLY inside the fenced {@code <alert_data>} block as
  * data. The real defenses are the structured-output schema and the evidence-ID
- * validator — instructions alone are not a mitigation.
+ * validator — instructions alone are not a mitigation.</p>
  */
 @Component
 public class TriageAgent {
@@ -78,11 +78,13 @@ public class TriageAgent {
             - Respond ONLY with the JSON object described below — no prose around it.
             """;
 
-    /** Tool exposure per rule type — don't hand every tool to every call. */
-    private static final Map<String, List<String>> TOOLS_BY_RULE = Map.of(
-            "geo",      List.of(TriageTools.TOOL_ACCOUNT_HISTORY),
+    /**
+     * Tool exposure per rule type; package-private for RagSeedConsistencyTest.
+     */
+    static final Map<String, List<String>> TOOLS_BY_RULE = Map.of(
+            "geo", List.of(TriageTools.TOOL_ACCOUNT_HISTORY),
             "velocity", List.of(TriageTools.TOOL_ACCOUNT_HISTORY, TriageTools.TOOL_RECENT_ALERTS),
-            "zscore",   List.of(TriageTools.TOOL_ACCOUNT_HISTORY, TriageTools.TOOL_RECENT_ALERTS));
+            "zscore", List.of(TriageTools.TOOL_ACCOUNT_HISTORY, TriageTools.TOOL_RECENT_ALERTS));
 
     private static final List<String> DEFAULT_TOOLS = List.of(TriageTools.TOOL_ACCOUNT_HISTORY);
 
@@ -120,7 +122,9 @@ public class TriageAgent {
                 .register(meterRegistry);
     }
 
-    /** Delegates with no RAG context — existing callers/tests get identical prior behavior. */
+    /**
+     * Delegates with no RAG context — existing callers/tests get identical prior behavior.
+     */
     public TriagedAlertMessage triage(PaymentAlert alert) {
         return triage(alert, List.of());
     }

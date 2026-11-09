@@ -1,12 +1,7 @@
 package io.rpe.triage.service;
 
 import io.rpe.triage.TriageTestSupport;
-import io.rpe.triage.agent.RagEmbeddingClient;
-import io.rpe.triage.agent.RagRetrievalClient;
-import io.rpe.triage.agent.TriageAgent;
-import io.rpe.triage.agent.TriageLlmClient;
-import io.rpe.triage.agent.TriageTools;
-import io.rpe.triage.agent.EvidenceValidator;
+import io.rpe.triage.agent.*;
 import io.rpe.triage.config.LlmResilienceConfig;
 import io.rpe.triage.domain.TriagedAlertMessage;
 import io.rpe.triage.rag.TriageVectorRepository.RetrievedChunk;
@@ -49,24 +44,18 @@ class TriageServiceRagCbGateTest {
         }
         assertThat(resilience.circuitBreaker().getState()).isEqualTo(CircuitBreaker.State.OPEN);
 
-        // Invocation flags — direct proof of zero calls, not dependent on how process() handles a throw.
-        AtomicBoolean embedCalled = new AtomicBoolean(false);
+        // Invocation flag — direct proof of zero calls, not dependent on how process() handles a throw.
         AtomicBoolean retrieveCalled = new AtomicBoolean(false);
 
-        RagEmbeddingClient embedding = new RagEmbeddingClient(null, null, null, registry, "test") {
-            @Override
-            public float[] embed(String text) {
-                embedCalled.set(true);
-                return new float[0];
-            }
-        };
-        RagRetrievalClient retrieval = new RagRetrievalClient(null, null, null, registry) {
-            @Override
-            public List<RetrievedChunk> retrieve(float[] q, int topK, double threshold) {
-                retrieveCalled.set(true);
-                return List.of();
-            }
-        };
+        RagRetrievalClient retrieval =
+                new RagRetrievalClient(null, null, null, registry) {
+                    @Override
+                    public List<RetrievedChunk> retrieveByRule(String ruleName, int limit) {
+                        // Flag proves keyed lookup was invoked
+                        retrieveCalled.set(true);
+                        return List.of();
+                    }
+                };
 
         // Real agent wired to the now-open client — verdict path is genuinely degraded, not mocked.
         var agent = new TriageAgent(
@@ -78,17 +67,15 @@ class TriageServiceRagCbGateTest {
         var publisher = new TriageTestSupport.CapturingPublisher();
         var service = new TriageService(
                 inbox, agent, new DegradedTriageFallback(TriageTestSupport.lenientProps()), publisher,
-                TriageTestSupport.objectMapper(), registry, props,
-                embedding, retrieval, resilience);
+                TriageTestSupport.objectMapper(), registry, props, retrieval, resilience);
 
         service.process(TriageTestSupport.alert("geo"));
 
-        // Primary assertion: neither RAG client fired, regardless of downstream verdict handling.
-        assertThat(embedCalled.get()).isFalse();
+        // Primary assertion: retrieval client never fired, regardless of downstream verdict handling.
         assertThat(retrieveCalled.get()).isFalse();
 
         assertThat(publisher.published).hasSize(1);
-        TriagedAlertMessage verdict = publisher.published.get(0);
+        TriagedAlertMessage verdict = publisher.published.getFirst();
         assertThat(verdict.ragContextUsed()).isFalse();
 
         vt.close();

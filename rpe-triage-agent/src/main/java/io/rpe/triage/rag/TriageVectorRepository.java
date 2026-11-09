@@ -3,12 +3,9 @@ package io.rpe.triage.rag;
 import java.util.List;
 
 /**
- * Raw pgvector similarity search — the deliberate bypass of Spring AI's
- * {@code VectorStore} (ADR-30 §2 Decision). Exists as its own interface,
- * separate from {@code RagRetrievalClient}, so the R4j decorator chain
- * (client) and the SQL (repository) stay independently testable —
- * same separation TriageLlmClient/ChatModel already models for the LLM boundary.
- */
+ * Corpus access for RAG retrieval. v1 uses {@link #findByRuleName} (exact key, ADR-30 D3);
+ * {@link #similaritySearch} is the raw pgvector query kept for the v2 similarity corpus.
+ * */
 public interface TriageVectorRepository {
 
     /**
@@ -21,6 +18,15 @@ public interface TriageVectorRepository {
      */
     List<RetrievedChunk> similaritySearch(float[] queryEmbedding, int topK, double similarityThreshold);
 
-    /** One retrieved corpus row plus its similarity score for evidence-grounding in the verdict. */
+    /**
+     * Exact rule_name lookup (ADR-30 D3); similarity fixed at 1.0.
+     *
+     * @param limit max rows, ordered by id
+     */
+    List<RetrievedChunk> findByRuleName(String ruleName, int limit);
+
+    /**
+     * One retrieved corpus row plus its similarity score for evidence-grounding in the verdict.
+     */
     record RetrievedChunk(String ruleName, String content, double similarity) {}
 }
