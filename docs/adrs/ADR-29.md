@@ -1,5 +1,3 @@
-<!-- edit-log (newest first): v1.0 | 2026-07-15 | Initial. ACCEPTED — backfill documenting a convention enforced since ADR-01 (2026-05-20) that never had its own ADR. -->
-
 ---
 asset_id: adr-29-no-global-resilience4j-defaults
 asset_path: docs/adrs/ADR-29.md

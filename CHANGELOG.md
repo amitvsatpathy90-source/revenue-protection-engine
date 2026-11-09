@@ -3,9 +3,21 @@
 Version history for revenue-protection-engine. Newest first. Each entry is a documentation/design
 milestone; test counts are per service (detection / relay / alert / triage) at that point in time.
 
-> This file was extracted from the project's working edit-log so that version history lives here
-> (where a reader expects it) rather than inline in the AI-context file, where a reader — human or
-> AI — can mistake past states for current ones.
+## v1.19 — 2026-11-09
+
+RAG goes live on the v1 keyed-lookup path (runtime change, `rpe-triage-agent` only):
+
+- **Retrieval:** `TriageService` retrieves by exact `rule_name` (`RagRetrievalClient.retrieveByRule` →
+  `TriageVectorRepository.findByRuleName`, `ORDER BY id LIMIT topK`). No embedding call on the v1 path; chat-CB-open
+  still skips RAG entirely. The R4j chain is shared between `retrieve` and `retrieveByRule`. `TriageService` no longer
+  takes a `RagEmbeddingClient`; embedding code and config stay for the v2 similarity corpus.
+- **Observability / safety:** untagged counter `triage.rag.retrieval.empty` (keyed lookup found no row); `findByRuleName`
+  runs with a 3s JDBC statement timeout so an abandoned query releases its pooled connection.
+- **Tests:** keyed-lookup service tests, a seed-vs-`TOOLS_BY_RULE` consistency test, `RagRetrievalClientTest` (R4j chain
+  on both entry points: error, timeout, circuit-open, bulkhead-full), and the first repository integration test on real
+  pgvector (Docker-gated). Triage: 65 run, 0 failures, 0 skipped, measured 2026-11-09.
+- **ADR-30 v1.5.0 (ACCEPTED).** Not decided here: `corpus_mode` on `TriagedAlertMessage`, deleting dormant embedding
+  code, a UNIQUE constraint on `rule_name`. No faithfulness measurement; the prompt grows by one chunk per alert.
 
 ## v1.18 — 2026-11-05
 
