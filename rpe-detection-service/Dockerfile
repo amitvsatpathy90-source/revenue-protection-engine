@@ -6,7 +6,7 @@ RUN mvn -q -B dependency:go-offline
 COPY src ./src
 RUN mvn -q -B package -DskipTests
 
-FROM eclipse-temurin:21.0.7_6-jre
+FROM eclipse-temurin:21.0.13_9-jre
 WORKDIR /app
 COPY --from=build /build/target/rpe-detection-service-*.jar app.jar
 # Non-root by default (defense in depth): the pod securityContext already sets runAsUser:1000 +
