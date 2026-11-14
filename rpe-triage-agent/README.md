@@ -18,6 +18,8 @@ full rollback; the core build never sees Spring AI):
 
 ```bash
 mvn -f rpe-triage-agent/pom.xml verify          # all provider interaction stubbed
+mvn -f rpe-triage-agent/pom.xml verify                                                 # all provider interaction stubbed
+mvn -f rpe-triage-agent/pom.xml -Prageval -Dtest=RagEvalPgVectorIntegrationTest test   # opt-in; needs Docker + Ollama
 mvn -f rpe-triage-agent/pom.xml spring-boot:run # needs DB_PASSWORD (+ optional SPRING_AI_OPENAI_API_KEY)
 docker compose --profile triage up -d            # containerised, from repo root
 ```
@@ -51,7 +53,10 @@ kafka-console-consumer --bootstrap-server localhost:19092 --topic payment.alerts
 - Tools are read-only and account-scoped via `ToolContext` (model-supplied account ids
   are verified; mismatch = bounded error + counter).
 - Evidence items must reference tool-call IDs from this run; fabricated evidence is
-  stripped, confidence downgraded, `evidence_stripped=true`.
+  stripped, confidence downgraded, `evidence_stripped=true`. Per-verdict signals
+  (`EVIDENCE_STRIPPED`, `EVIDENCE_PARTIAL_DROP`, `NO_EVIDENCE`) are counted as
+  `triage.verdict.signal{signal}` and logged by `alert_id`. Diagnostic only: they do not
+  calibrate confidence or route to review, and the checks cover provenance, not correctness.
 - `DegradedTriageFallback` has zero Spring AI imports — it must survive the dependency
   being deleted.
 - Stale `PENDING_TRIAGE` rows (crash window) get degraded verdicts from the sweep;

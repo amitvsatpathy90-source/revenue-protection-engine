@@ -117,8 +117,10 @@ We build `rpe-triage-agent` as an independent Spring Boot module with these bind
 ### 5.3 Operational impact
 
 - **Observability (locked signals, with labels):** `triage_llm_latency_seconds` histogram {provider, outcome};
-  `triage_tool_rounds` histogram; `triage_verdicts_total` {triage_status}; `resilience4j_circuitbreaker_state` +
-  state-transition events {name="llm"}; `triage_consumer_lag` {group}; Spring AI `gen_ai.client.token.usage`
+  `triage_tool_rounds` histogram; `triage_verdicts_total` {triage_status}; `triage_verdict_signal_total`
+  {signal=EVIDENCE_STRIPPED|EVIDENCE_PARTIAL_DROP|NO_EVIDENCE} (diagnostic, not a gate);
+  `resilience4j_circuitbreaker_state` + state-transition events {name="llm"}; `triage_consumer_lag` {group}; Spring AI
+  `gen_ai.client.token.usage`
   {type=input|output} as the cost signal. Alert on fallback-rate rate-of-change, not level.
 - **Cost:** triage volume = ~1% of events; at demo throughput, single-digit USD/month under the RateLimiter cap.
 - **Security:** key via env only; token counts in metrics, **never** prompt/response bodies in logs or span attributes
@@ -140,7 +142,9 @@ We build `rpe-triage-agent` as an independent Spring Boot module with these bind
 
 - **Trigger:** crafted merchant/memo text attempts instruction override.
 - **Blast radius:** worst case = one wrong advisory verdict; cannot alter `alert_id`, delivery, or detection.
-- **Detection:** schema-validation failure counter; evidence-reference validator drop counter.
+- **Detection:** schema-validation failure counter; evidence-reference validator drop counter, split per
+  verdict by `triage_verdict_signal_total{signal}` (all dropped vs some dropped). Provenance only: a
+  grounded citation can still be wrong.
 - **Mitigation:** fenced data framing + structured-output rejection + evidence-ID validation (Decision §8); failed parse
   routes to degraded verdict, not retry.
 
@@ -203,5 +207,6 @@ is disposable), no core-pipeline change, no external contract.
 
 | Date       | Version | Author | Change                                                                                                                                                                                                                                                                                                                                                                                                    |
 |------------|---------|--------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-11-14 | 1.2.0   | amit   | Additive observability amendment: `triage_verdict_signal_total{signal}` added to §5.3 locked signals; §6.2 detection note updated. No decision change.                                                                                                                                                                                                                                                    |
 | 2026-07-04 | 1.1.0   | amit   | Doc-drift audit correction: flipped Status PROPOSED → ACCEPTED. Implementation completed and has been treated as settled fact by ADR-17 (§Stage 0), ADR-18, ADR-23, ADR-24, Architecture Spec, README.md, and `ADR-15.md` since 2026-06-17 — the status field was the only place still saying otherwise. Removed the dangling `arch-decisions-log.md` cross-reference (file does not exist in this repo). |
 | 2026-06-12 | 1.0.0   | amit   | Initial draft — status PROPOSED                                                                                                                                                                                                                                                                                                                                                                           |
