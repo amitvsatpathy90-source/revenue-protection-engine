@@ -18,7 +18,9 @@
     <artifactId>rpe-triage-agent</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>rpe-triage-agent</name>
-    <description>Advisory AI triage downstream of payment.alerts — ADR-15. Never gates detection or delivery.</description>
+    <description>
+        Advisory AI triage downstream of payment.alerts — ADR-15. Never gates detection or delivery.
+    </description>
 
     <properties>
         <java.version>21</java.version>
@@ -26,6 +28,9 @@
         <spring-ai.version>2.0.0</spring-ai.version>
         <!-- Same Resilience4j line as core; wired manually (no global defaults) -->
         <resilience4j.version>2.4.0</resilience4j.version>
+        <!-- RAG evaluation tests are excluded from the default test run. -->
+        <test.includeTags/>
+        <test.excludeTags>rageval</test.excludeTags>
     </properties>
 
     <dependencyManagement>
@@ -233,7 +238,25 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
+            <!-- JUnit Platform tag filtering: RAG evaluation tests remain opt-in. -->
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <groups>${test.includeTags}</groups>
+                    <excludedGroups>${test.excludeTags}</excludedGroups>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
+    <profiles>
+        <profile>
+            <id>rageval</id>
+            <!-- Opt in with -Prageval; include RAG evaluation tests and clear the default exclusion. -->
+            <properties>
+                <test.includeTags>rageval</test.includeTags>
+                <test.excludeTags/>
+            </properties>
+        </profile>
+    </profiles>
 
 </project>
