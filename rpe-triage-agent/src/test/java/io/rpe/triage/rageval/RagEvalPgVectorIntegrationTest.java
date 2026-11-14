@@ -2,6 +2,7 @@ package io.rpe.triage.rageval;
 
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.ai.ollama.OllamaEmbeddingModel;
@@ -43,6 +44,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Each query's candidate pool is retrieved once and shared across selectors,
  * isolating the impact of the selection strategy.</p>
  */
+@Tag("rageval")   // opt-in via -Prageval
 @Testcontainers(disabledWithoutDocker = true)
 @EnabledIf("ollamaUp")
 class RagEvalPgVectorIntegrationTest {

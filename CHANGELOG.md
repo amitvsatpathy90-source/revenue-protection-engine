@@ -3,6 +3,22 @@
 Version history for revenue-protection-engine. Newest first. Each entry is a documentation/design
 milestone; test counts are per service (detection / relay / alert / triage) at that point in time.
 
+## v1.20 — 2026-11-14
+
+Per-verdict evidence-grounding signals (observability only; `rpe-triage-agent`, no contract change):
+
+- `EvidenceValidator.Result` carries `supplied` and `dropped`; pure `classify(Result)` yields
+  `EVIDENCE_STRIPPED | EVIDENCE_PARTIAL_DROP | NO_EVIDENCE`.
+- `TriageAgent` emits `triage.verdict.signal{signal}` and one log line per flagged verdict
+  (`alert_id`, signal names, `supplied` and `dropped` counts only).
+- `RagEvalPgVectorIntegrationTest` is now tagged `rageval` and excluded from the default test run;
+  opt in with `-Prageval` (Surefire `groups`/`excludedGroups` via `test.includeTags`/`test.excludeTags`).
+- Not done: confidence calibration, human-review routing, severity comparison against the degraded
+  fallback, any `payment.alerts.triaged` schema change, a test of the counter/log emission itself.
+- **Tests:** `EvidenceSignalTest` (4 cases: classification and counts). Triage: 68 run, 0 failures,
+  0 skipped, measured 2026-11-14 (`mvn clean verify`, harness excluded). Harness via `-Prageval`:
+  1 run, 0 failures, 0 skipped. 65 → 68 = −1 harness, +4 new.
+
 ## v1.19 — 2026-11-09
 
 RAG goes live on the v1 keyed-lookup path (runtime change, `rpe-triage-agent` only):
