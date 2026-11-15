@@ -19,6 +19,12 @@ cd "$(dirname "$0")"
 
 KID="${JWKS_KID:-rpe-lab-1}"
 
+# Idempotent: rotating keys under running services breaks JWT validation.
+if [[ -s keys/private.pem && -s public/jwks.json && "${FORCE:-0}" != "1" ]]; then
+  echo "keys exist, unchanged (FORCE=1 to rotate, then restart services)"
+  exit 0
+fi
+
 mkdir -p keys public
 umask 077   # private key must land 0600; public/jwks.json is chmod'd back to world-readable below
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out keys/private.pem 2>/dev/null
