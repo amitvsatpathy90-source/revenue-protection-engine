@@ -6,6 +6,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+python3 generate_fixtures.py >/dev/null
+
 BROKER="${BROKER:-localhost:19092}"
 DET_URL="${DET_URL:-http://localhost:8080}"
 RELAY_URL="${RELAY_URL:-http://localhost:8082}"
@@ -19,21 +21,44 @@ produce() {   # $1 = topic, $2 = file
 
 section() { echo; echo "=== $1 ==="; }
 
+must_get() {
+  local url="$1" label="$2"
+  shift 2
+
+  if curl -fsS --connect-timeout 3 --max-time 5 \
+    "$@" "$url" >/dev/null; then
+    echo "OK   $label"
+  else
+    echo "FAIL $label" >&2
+    exit 1
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # 0. PRE-FLIGHT
 # ---------------------------------------------------------------------------
 section "0. Pre-flight: liveness/readiness (public, no token)"
-for url in "$DET_URL" "$RELAY_URL" "$ALERT_URL" "$TRIAGE_URL"; do
-  curl -sf "$url/actuator/health/liveness"  >/dev/null && echo "OK  $url liveness"
-  curl -sf "$url/actuator/health/readiness" >/dev/null && echo "OK  $url readiness"
+for url in "$DET_URL" "$RELAY_URL" "$ALERT_URL"; do
+  must_get "$url/actuator/health/liveness"  "$url liveness"
+  must_get "$url/actuator/health/readiness" "$url readiness"
 done
 
+if [[ "${TRIAGE:-0}" == "1" ]]; then
+  must_get "$TRIAGE_URL/actuator/health/liveness"  "$TRIAGE_URL liveness"
+  must_get "$TRIAGE_URL/actuator/health/readiness" "$TRIAGE_URL readiness"
+fi
+
 section "0. Pre-flight: mint scrape token + protected health (per postman/README.md)"
-bash ../deploy/oauth/generate-jwks.sh >/dev/null 2>&1 || true   # no-op if keys already exist
+# no-op if keys already exist
+if [[ ! -s ../deploy/oauth/keys/private.pem ||
+      ! -s ../deploy/oauth/public/jwks.json ]]; then
+  echo "FAIL lab JWKS missing; generate keys before starting services" >&2
+  exit 1
+fi
 export RPE_SCRAPE_JWT
 RPE_SCRAPE_JWT="$(bash ../deploy/oauth/mint-jwt.sh --ttl 3600)"
-curl -sf -H "Authorization: Bearer $RPE_SCRAPE_JWT" "$DET_URL/actuator/health" >/dev/null \
-  && echo "OK  detection protected health reachable"
+must_get "$DET_URL/actuator/health" "detection protected health" \
+  -H "Authorization: Bearer $RPE_SCRAPE_JWT"
 
 section "0. Pre-flight: DLT depth baseline (expect 0 on all three)"
 for dlt in payment.events.DLT payment.alerts.DLT payment.alerts.triage.DLT; do
@@ -42,9 +67,11 @@ for dlt in payment.events.DLT payment.alerts.DLT payment.alerts.triage.DLT; do
   echo "  $dlt high-watermark sum: $n   (expect 0 before this run; non-zero = pre-existing poison, investigate before proceeding)"
 done
 
-section "0. Pre-flight: outbox/processed_alerts baseline counts"
-echo "Run manually against your DB (see assertions.md for full queries):"
-read -r -p "Baseline reviewed — press enter to continue, or Ctrl-C to abort... " _
+if [[ "${NON_INTERACTIVE:-0}" != "1" ]]; then
+  section "0. Pre-flight: outbox/processed_alerts baseline counts"
+  echo "Run manually against your DB (see assertions.md for full queries):"
+  read -r -p "Baseline reviewed — press enter to continue, or Ctrl-C to abort... " _
+fi
 
 # ---------------------------------------------------------------------------
 # 1. CLEAN BASELINE
