@@ -86,3 +86,6 @@ prometheus-data/
 
 # --- Local/generated RAG artifacts ---
 corpus-insert.sql
+# --- synthetic-e2e generated ---
+__pycache__/
+synthetic-e2e/events/
