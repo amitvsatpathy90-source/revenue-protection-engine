@@ -164,16 +164,24 @@ docker compose up -d
 # 5b. CANONICAL four-service topology (ADR-17 Stage 5 — all services as containers):
 docker compose -f deploy/docker-compose.services.yml up -d
 
-# 6. Run services individually. Each service is its own module (ADR-17); the
-#    repo root has no pom, so target a service pom with -f. Spring does not
-#    read .env natively — this relies on the export from step 2 above.
+# 6. Run services individually. Each service is its own module (ADR-17).
+#    Spring does not read .env natively, so export it in step 4 first.
+#    Use the service-specific JDBC URL to resolve unqualified SQL correctly.
 #    This comes after step 5a above.
+DB_URL="$DB_URL_DETECTION" \
 mvn -f rpe-detection-service/pom.xml spring-boot:run   # port 8080
-mvn -f rpe-relay-service/pom.xml spring-boot:run        # port 8082
+
+DB_URL="$DB_URL_RELAY" \
+mvn -f rpe-relay-service/pom.xml spring-boot:run       # port 8082
+
+DB_URL="$DB_URL_ALERT" \
 mvn -f rpe-alert-service/pom.xml spring-boot:run        # port 8083
+
+DB_URL="$DB_URL_TRIAGE" \
 mvn -f rpe-triage-agent/pom.xml spring-boot:run         # port 8081
 
-# 7. (dev mode — BlockHound + VT pinning trace, detection service)
+# 7. Dev mode — BlockHound + VT pinning trace, detection service
+DB_URL="$DB_URL_DETECTION" \
 mvn -f rpe-detection-service/pom.xml spring-boot:run \
   -Dspring-boot.run.profiles=dev \
   -Dspring-boot.run.arguments="--rpe.dev.blockhound.enabled=true --rpe.dev.reactor-debug-agent=true" \
@@ -184,8 +192,14 @@ kafka-console-consumer --bootstrap-server localhost:19092 \
   --topic payment.alerts --from-beginning
 
 # Relay health: pending count + oldest row age
-psql $DB_URL -c \
-  "SELECT count(*), max(now()-created_at) AS oldest FROM outbox WHERE status='PENDING';"
+PGPASSWORD="$DB_PASSWORD" psql \
+  -h localhost \
+  -U "$DB_USER" \
+  -d rpe \
+  -c "SELECT count(*),
+             max(now()-created_at) AS oldest
+      FROM detection.outbox
+      WHERE status='PENDING';"
 
 # Lettuce pool metrics
 curl -s -H "Authorization: Bearer $RPE_SCRAPE_JWT" \
