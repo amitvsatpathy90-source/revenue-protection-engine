@@ -55,7 +55,9 @@ public class EvidenceValidator {
 
     public Result validate(TriageVerdict verdict, Set<String> executedToolCallIds) {
         List<TriageVerdict.Evidence> grounded = verdict.evidence().stream()
-                .filter(item -> executedToolCallIds.contains(item.toolCallId()))
+                .filter(item -> item.toolCallId() != null
+                        && !item.toolCallId().isBlank()
+                        && executedToolCallIds.contains(item.toolCallId()))
                 .toList();
 
         int supplied = verdict.evidence().size();   // captured before filtering

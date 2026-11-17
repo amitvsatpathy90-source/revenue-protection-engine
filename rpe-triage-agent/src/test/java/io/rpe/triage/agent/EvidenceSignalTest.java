@@ -6,6 +6,7 @@ import io.rpe.triage.domain.TriageVerdict.Evidence;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -55,5 +56,38 @@ class EvidenceSignalTest {
 
         assertThat(r.evidenceStripped()).isFalse();   // keeps the existing contract
         assertThat(EvidenceValidator.classify(r)).containsExactly(VerdictSignal.NO_EVIDENCE);
+    }
+
+    @Test
+    void blankToolCallIdIsDroppedEvenIfExecutedIdsContainBlank() {
+        var r = validator.validate(
+                verdict(List.of(new Evidence("", "f"))),
+                Set.of(""));
+
+        assertThat(r.supplied()).isEqualTo(1);
+        assertThat(r.dropped()).isEqualTo(1);
+        assertThat(r.evidenceStripped()).isTrue();
+        assertThat(r.verdict().evidence()).isEmpty();
+        assertThat(r.verdict().confidence()).isEqualTo(0.2);
+        assertThat(EvidenceValidator.classify(r))
+                .containsExactly(VerdictSignal.EVIDENCE_STRIPPED);
+    }
+
+    @Test
+    void nullToolCallIdIsDroppedEvenIfExecutedIdsContainNull() {
+        Set<String> executedIds = new HashSet<>();
+        executedIds.add(null);
+
+        var r = validator.validate(
+                verdict(List.of(new Evidence(null, "f"))),
+                executedIds);
+
+        assertThat(r.supplied()).isEqualTo(1);
+        assertThat(r.dropped()).isEqualTo(1);
+        assertThat(r.evidenceStripped()).isTrue();
+        assertThat(r.verdict().evidence()).isEmpty();
+        assertThat(r.verdict().confidence()).isEqualTo(0.2);
+        assertThat(EvidenceValidator.classify(r))
+                .containsExactly(VerdictSignal.EVIDENCE_STRIPPED);
     }
 }
