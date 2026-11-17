@@ -129,27 +129,36 @@ public class KafkaTriageConfig {
 
     @Bean
     public DefaultKafkaConsumerFactory<String, PaymentAlert> triageConsumerFactory(
-            KafkaProperties kafkaProps, MeterRegistry meterRegistry) {
+            KafkaProperties kafkaProps, MeterRegistry meterRegistry,
+            @Value("${triage.kafka.max-poll-records:5}") int maxPollRecords,
+            @Value("${triage.kafka.max-poll-interval-ms:300000}") int maxPollIntervalMs) {
         Map<String, Object> props = kafkaProps.buildConsumerProperties();
         props.putAll(securityProps);
         props.put(ConsumerConfig.GROUP_ID_CONFIG, CONSUMER_GROUP);
+
         // payment.alerts is written by a Kafka-transactional relay — read_committed is
         // mandatory or this consumer reads uncommitted aborted transactions (ADR-15 §3.1)
         props.put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed");
+
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
         props.put(ErrorHandlingDeserializer.VALUE_DESERIALIZER_CLASS, JsonDeserializer.class.getName());
         props.put(JsonDeserializer.VALUE_DEFAULT_TYPE, PaymentAlert.class.getName());
         props.put(JsonDeserializer.TRUSTED_PACKAGES, "io.rpe.triage.domain");
         props.put(JsonDeserializer.USE_TYPE_INFO_HEADERS, false);
-        // Poll budget pinned against the inline LLM path (arch-audit F-03): worst case per record is
-        // 3 attempts x 12s TimeLimiter + 2 x 1s retry backoff = 38s (triage.llm.time-limit-ms /
-        // retry-max-attempts / retry-backoff-ms, application.yml). 5 records x 38s = 190s, under the
-        // 300s max.poll.interval.ms default made explicit here so a future default change can't
-        // silently reopen the gap. Without this bound, a backlog during an LLM brownout can exceed
-        // max.poll.interval.ms before the CB's 20-call window trips, causing a rebalance mid-batch.
-        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 5);
-        props.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, 300_000);
+
+        // Poll budget is bounded against the inline LLM path.
+        //
+        // Per alert: TriageAgent allows up to 4 LLM calls (initial call + 3 tool rounds).
+        // Each call is bounded by triage.llm.time-limit-ms, including retries and backoff.
+        //
+        // At defaults: 5 records x 4 calls x 12s = 240s, below the 300s max.poll.interval.ms.
+        // This excludes non-LLM processing overhead.
+        //
+        // Reduce triage.kafka.max-poll-records when increasing time-limit-ms for slower local models.
+        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, maxPollRecords);
+        props.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, maxPollIntervalMs);
+
         var factory = new DefaultKafkaConsumerFactory<String, PaymentAlert>(props);
         factory.addListener(new MicrometerConsumerListener<>(meterRegistry));
         return factory;
@@ -164,13 +173,17 @@ public class KafkaTriageConfig {
         var factory = new ConcurrentKafkaListenerContainerFactory<String, PaymentAlert>();
         factory.setConsumerFactory(triageConsumerFactory);
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
-        // Distributed tracing (ADR-25): continue the trace from the payment.alerts traceparent
-        // header (relay-injected). The LLM round-trip then appears as a gen_ai span under this
-        // consume span (Spring AI observation). Registry resolved from the context automatically.
+
+        // Distributed tracing (ADR-25): continue the trace from the payment.alerts
+        // traceparent header (relay-injected). The LLM round-trip then appears as a
+        // gen_ai span under this consume span (Spring AI observation).
+        // Registry resolved from the context automatically.
         factory.getContainerProperties().setObservationEnabled(true);
+
         // One consumer per payment.alerts partition (3): up to 3 concurrent triages,
         // inside the Bulkhead's 5-call ceiling
         factory.setConcurrency(3);
+
         var exec = new SimpleAsyncTaskExecutor("triage-consumer-");
         exec.setVirtualThreads(true);
         factory.getContainerProperties().setListenerTaskExecutor(exec);
@@ -186,6 +199,7 @@ public class KafkaTriageConfig {
         Map<Class<?>, KafkaOperations<?, ?>> dltTemplates = new LinkedHashMap<>();
         dltTemplates.put(byte[].class, triagedDltBytesTemplate);   // deserialization failures → raw bytes
         dltTemplates.put(Object.class, triagedKafkaTemplate);       // validation failures → JSON
+
         var recoverer = new DeadLetterPublishingRecoverer(dltTemplates,
                 KafkaTriageConfig::triageDltDestination);
         var errorHandler = new DefaultErrorHandler(recoverer, new FixedBackOff(1000L, 2L));
@@ -213,9 +227,11 @@ public class KafkaTriageConfig {
         var factory = new DefaultKafkaProducerFactory<String, TriagedAlertMessage>(props);
         factory.addListener(new MicrometerProducerListener<>(meterRegistry));
         var template = new KafkaTemplate<>(factory);
+
         // Trace the payment.alerts.triaged produce (and DLT routing) under the triage consume
         // span, injecting traceparent so downstream consumers of triaged output continue (ADR-25).
         template.setObservationEnabled(true);
+
         return template;
     }
 
