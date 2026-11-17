@@ -63,7 +63,7 @@ public class KafkaTriageConfig {
      * standing up a broker (the triage suite is container-free by design).
      */
     static TopicPartition triageDltDestination(
-            org.apache.kafka.clients.consumer.ConsumerRecord<?, ?> record, Exception ex) {
+            org.apache.kafka.clients.consumer.ConsumerRecord<?, ?> consumerRecord, Exception ex) {
         return new TopicPartition(TRIAGE_DLT_TOPIC, -1);
     }
 
