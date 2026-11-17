@@ -1,0 +1,23 @@
+# Dev-only profile: local Ollama via the OpenAI-compatible /v1 endpoint.
+# Correctness testing only; not a performance or production profile.
+
+spring:
+  ai:
+    openai:
+      base-url: ${TRIAGE_OLLAMA_BASE_URL:http://localhost:11434/v1}
+      api-key: ollama-local-dummy          # Ollama ignores it
+      chat:
+        timeout: 50s                       # above TimeLimiter; socket backstop
+        options:
+          model: ${TRIAGE_OLLAMA_MODEL}    # no default; fail fast if unset
+
+triage:
+  llm:
+    provider-tag: ollama
+    time-limit-ms: 45000
+    slow-call-ms: 30000
+    rpm: 1000                              # no billing breaker locally
+  kafka:
+    # Poll budget: 1 record x 4 calls x 45s = 180s < 300s max.poll.interval.ms
+    max-poll-records: 1
+    max-poll-interval-ms: 300000
