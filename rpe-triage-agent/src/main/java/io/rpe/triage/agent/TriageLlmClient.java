@@ -16,6 +16,7 @@ import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.beans.factory.annotation.Qualifier;
 import io.rpe.triage.config.BoundaryHandler;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,14 +29,15 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
 /**
- * Every provider round-trip goes through this decorator chain — the LLM is the
+ * Every provider round-trip goes through this decorator chain -- the LLM is the
  * system's least reliable, most expensive outbound dependency (ADR-15).
  *
- * Decorator order, innermost → outermost (the triage agent design discipline — BINDING):
+ * <p>Decorator order, innermost &rarr; outermost (the triage agent design discipline -- BINDING):
+ * <pre>
+ *   LLM call -&gt; Retry -&gt; TimeLimiter -&gt; Bulkhead -&gt; RateLimiter -&gt; CircuitBreaker
+ * </pre>
  *
- *   LLM call → Retry → TimeLimiter → Bulkhead → RateLimiter → CircuitBreaker
- *
- * Retry sits INSIDE the TimeLimiter so retries share one 12s budget — each retry
+ * <p>Retry sits INSIDE the TimeLimiter so retries share one 12s budget -- each retry
  * must not consume a fresh budget unobserved, and the CB (outermost) must see the
  * true wall-clock of the retried unit for slow-call-rate detection.
  */
@@ -64,6 +66,24 @@ public class TriageLlmClient {
     }
 
     /**
+     * Returns a tool-calling options builder seeded from the model's default options.
+     * <p>
+     * Keeps the provider-specific options type; {@code OpenAiChatModel} casts prompt
+     * options to {@code OpenAiChatOptions}, so a generic builder fails with
+     * {@code ClassCastException}.
+     *
+     * @return builder derived from the model defaults, or a generic builder if the
+     *         defaults are not {@link ToolCallingChatOptions}
+     */
+    ToolCallingChatOptions.Builder<?> newToolCallingOptionsBuilder() {
+        // pattern match avoids a separate cast and null-safe instanceof check
+        return chatModel.getOptions() instanceof ToolCallingChatOptions o
+                ? o.mutate()                         // keeps provider options type and defaults
+                : ToolCallingChatOptions.builder();  // fallback for models without tool-calling options
+
+    }
+
+    /**
      * One guarded provider call. Maps every terminal failure to a
      * {@link TriageAgentException} with a bounded reason — callers route to the
      * degraded verdict; nothing here is retried beyond the inner Retry's
@@ -73,14 +93,19 @@ public class TriageLlmClient {
     public ChatResponse call(Prompt prompt) {
         Supplier<ChatResponse> retried =
                 Retry.decorateSupplier(resilience.retry(), () -> chatModel.call(prompt));
-        // ExecutorService.submit (not CompletableFuture.supplyAsync): the TimeLimiter cancels this
-        // Future with interrupt=true on timeout, and a FutureTask from submit() actually interrupts
-        // its worker — a CompletableFuture from supplyAsync never does (its cancel cannot interrupt
-        // the running task), so the abandoned call would keep blocking. Best-effort against OkHttp
-        // (the hard bound is spring.ai.openai.chat.timeout=15s); together they cap the leak (RPE-02).
+
+        // ExecutorService.submit (not CompletableFuture.supplyAsync):
+        // The TimeLimiter cancels this Future with interrupt=true on timeout, and a FutureTask
+        // from submit() actually interrupts its worker -- a CompletableFuture from supplyAsync
+        // never does (its cancel cannot interrupt the running task), so the abandoned call would
+        // keep blocking.
+        //
+        // Best-effort against OkHttp (the hard bound is spring.ai.openai.chat.timeout=15s);
+        // together they cap the leak.
         Callable<ChatResponse> timeLimited = TimeLimiter.decorateFutureSupplier(
                 resilience.timeLimiter(),
                 () -> llmExecutor.submit(retried::get));
+
         Callable<ChatResponse> guarded =
                 CircuitBreaker.decorateCallable(resilience.circuitBreaker(),
                         RateLimiter.decorateCallable(resilience.rateLimiter(),

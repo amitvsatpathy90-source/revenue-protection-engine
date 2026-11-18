@@ -120,6 +120,7 @@ public class TriageAgent {
         this.allToolCallbacks = List.of(ToolCallbacks.from(triageTools));
         this.outputConverter = new BeanOutputConverter<>(TriageVerdict.class);
         this.meterRegistry = meterRegistry;
+
         // Locked signal: triage_tool_rounds histogram — saturation at the cap with
         // low-confidence verdicts invalidates assumption #3 (ADR-15 §8)
         this.roundsHistogram = DistributionSummary.builder("triage.tool.rounds")
@@ -144,13 +145,14 @@ public class TriageAgent {
      *                              garbage, doubled cost.
      */
     public TriagedAlertMessage triage(PaymentAlert alert, List<RetrievedChunk> ragContext) {
-        ToolCallingChatOptions options = ToolCallingChatOptions.builder()
+        // Spring AI 2.0 returns tool calls to the caller for manual execution below.
+        // Start from the model's options to retain its provider-specific options type.
+        ToolCallingChatOptions options = llmClient.newToolCallingOptionsBuilder()
                 .toolCallbacks(toolsFor(alert.ruleName()))
-                // Round budget is OURS. Spring AI 2.0 ChatModel.call() never auto-executes
-                // tools — tool calls are returned to the caller; we run executeToolCalls()
-                // manually in the loop below. internalToolExecutionEnabled was removed in 2.0.
+
                 // Triage wants consistency, not creativity
                 .temperature(0.2)
+
                 // The model cannot influence ToolContext — tools verify the requested
                 // account against this value (injection containment)
                 .toolContext(Map.of(TriageTools.CTX_ACCOUNT_ID, alert.accountId()))
@@ -213,6 +215,7 @@ public class TriageAgent {
     private void recordVerdictSignals(PaymentAlert alert, EvidenceValidator.Result grounded) {
         Set<VerdictSignal> signals = EvidenceValidator.classify(grounded);
         if (signals.isEmpty()) return;
+
         signals.forEach(s -> meterRegistry.counter(VERDICT_SIGNAL_METRIC, "signal", s.name()).increment());
         if (signals.equals(Set.of(VerdictSignal.NO_EVIDENCE))) {
             log.debug("Verdict signals alertId={} signals={}", alert.alertId(), signals);   // debug: may be normal
