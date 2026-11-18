@@ -95,8 +95,14 @@ public class TriageService {
             String reason = e instanceof TriageAgentException tae
                     ? tae.reason()
                     : "unexpected:" + e.getClass().getSimpleName();
-            // Outcome enum + alert_id only — never prompt/completion bodies
-            log.warn("LLM triage degraded alertId={} reason={}", alert.alertId(), reason);
+            Throwable root = e;
+            while (root.getCause() != null && root.getCause() != root) {
+                root = root.getCause();
+            }
+
+            // Outcome, root exception class, alert_id only; never message bodies
+            log.warn("LLM triage degraded alertId={} reason={} cause={}",
+                    alert.alertId(), reason, root.getClass().getSimpleName());
             verdict = fallback.degraded(alert, reason, props.promptVersion(), ragContextUsed);
         }
 
