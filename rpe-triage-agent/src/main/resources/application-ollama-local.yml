@@ -4,7 +4,7 @@
 spring:
   ai:
     openai:
-      base-url: ${TRIAGE_OLLAMA_BASE_URL:http://localhost:11434/v1}
+      base-url: ${TRIAGE_OLLAMA_BASE_URL:http://127.0.0.1:11434/v1}
       api-key: ollama-local-dummy          # Ollama ignores it
       chat:
         timeout: 50s                       # above TimeLimiter; socket backstop
