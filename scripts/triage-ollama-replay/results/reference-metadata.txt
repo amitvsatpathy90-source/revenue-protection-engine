@@ -1,0 +1,5 @@
+{"version":"0.40.16"}
+NAME           ID              SIZE      MODIFIED   
+llama3.2:3b    a80c4f17acd5    2.0 GB    4 days ago    
+a637fc9cd59791b1a2d144aca77830446eddcd56bde4fd412333676aa052d014  fixtures/r1.json
+430c76bdfbdc730185b496b52321f68f3618f858bd78abfa932d59780510fa65  fixtures/r2.json

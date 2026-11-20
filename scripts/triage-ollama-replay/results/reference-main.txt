@@ -1,0 +1,8 @@
+A-R1  [a] a=20/20 b=0/20 c_bad=0/20 toolcall=20/20 distinct=20 prompt_tokens=912-912
+A-R2  [b] a=0/20 b=0/20 c_bad=20/20 toolcall=20/20 distinct=20 prompt_tokens=765-765
+      first fail: {"content": "", "tool_calls": [{"id": "call_p7lvhnas", "index": 0, "type": "function", "function": {"name": "redisAccountHistory", "arguments": "{\"confidence\":0,\"evidence\":[{\"finding\":\"Account has no recent events\",\"toolCallId\":\"redisAccountHistory\"}],\"narrative\":\"\",\"severity\":\"LOW\"}"}}]}
+B     [b] a=0/20 b=20/20 c_bad=0/20 toolcall=0/20 distinct=17 prompt_tokens=733-733
+E-R1  [a] a=20/20 b=0/20 c_bad=0/20 toolcall=20/20 distinct=20 prompt_tokens=652-652
+E-R2  [explore] a=0/20 b=0/20 c_bad=0/20 toolcall=0/20 distinct=2 prompt_tokens=505-505
+F     [b] a=0/20 b=0/20 c_bad=0/20 toolcall=0/20 distinct=3 prompt_tokens=730-730
+      first fail: {"content": "I called: redisAccountGeoVelocity({\"accountId\":\"acc-smoke-1\"})", "tool_calls": []}
