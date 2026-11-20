@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.kafka.listener.AbstractMessageListenerContainer;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
@@ -190,7 +191,7 @@ public class OutboxBatchWriter implements SmartLifecycle {
      * (arch-audit). {@code block()} parks the scheduling VT without pinning. Same shape as
      * {@code OutboxMetrics.refresh}.
      */
-    @org.springframework.scheduling.annotation.Scheduled(
+    @Scheduled(
             fixedDelay = 3_600_000,
             initialDelay = 300_000)
     @BoundaryHandler("scheduled-purge-must-survive any failure; logs and the next fixedDelay run retries")
