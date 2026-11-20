@@ -89,3 +89,14 @@ corpus-insert.sql
 # --- synthetic-e2e generated ---
 __pycache__/
 synthetic-e2e/events/
+
+# --- Ollama triage replay harness (scripts/triage-ollama-replay) ---
+.venv/
+.pytest_cache/
+# raw Ollama request captures and generated replay scripts: never committed
+ollama-request-logs-*/
+*_v1_chat_completions_*
+# local replay output; only reference runs are tracked
+scripts/triage-ollama-replay/results/*
+!scripts/triage-ollama-replay/results/.gitkeep
+!scripts/triage-ollama-replay/results/reference-*.txt
