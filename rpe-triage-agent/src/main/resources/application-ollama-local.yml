@@ -21,3 +21,9 @@ triage:
     # Poll budget: 1 record x 4 calls x 45s = 180s < 300s max.poll.interval.ms
     max-poll-records: 1
     max-poll-interval-ms: 300000
+
+management:
+  otlp:
+    metrics:
+      export:
+        enabled: false
