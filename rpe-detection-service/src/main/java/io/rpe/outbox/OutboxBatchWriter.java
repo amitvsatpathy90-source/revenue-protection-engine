@@ -29,23 +29,25 @@ import java.util.concurrent.TimeUnit;
 /**
  * Async batched outbox writer.
  *
- * Flushes every 50ms (timer) or at 100 rows (count trigger), whichever comes first.
- * All JDBC executes on a dedicated platform thread — PgJDBC synchronized internals
+ * <p>Flushes every 50ms (timer) or at 100 rows (count trigger), whichever comes first.
+ *
+ * <p>All JDBC executes on a dedicated platform thread — PgJDBC synchronized internals
  * pin VT carrier threads if run on the VT scheduler.
  *
- * <b>Failure semantics — never a silent drop:</b>
+ * <p><b>Failure semantics — never a silent drop:</b>
  * <ul>
- *   <li>A failed flush re-queues the whole batch (idempotent: {@code ON CONFLICT (id) DO
- *       NOTHING} on deterministic alert_id makes a partial-batch re-insert safe).
- *       Postgres recovers → the queue drains.
- *   <li>The queue is bounded ({@value #DEFAULT_QUEUE_CAPACITY}). When full — sustained Postgres
- *       outage — intents are dropped LOUDLY: {@code rpe.outbox.dropped} counter +
- *       error log. Bounded memory beats unbounded heap growth during an outage.
- *   <li>Accepted crash window stays as designed: up to 50ms of un-flushed intents
- *       (ADR-12). Re-queue covers failures, not process death.
+ *     <li>A failed flush re-queues the whole batch (idempotent:
+ *         {@code ON CONFLICT (id) DO NOTHING} on deterministic alert_id makes a
+ *         partial-batch re-insert safe). Postgres recovers → the queue drains.</li>
+ *     <li>The queue is bounded ({@value #DEFAULT_QUEUE_CAPACITY}). When full —
+ *         sustained Postgres outage — intents are dropped LOUDLY:
+ *         {@code rpe.outbox.dropped} counter + error log. Bounded memory beats
+ *         unbounded heap growth during an outage.</li>
+ *     <li>Accepted crash window stays as designed: up to 50ms of un-flushed intents
+ *         (ADR-12). Re-queue covers failures, not process death.</li>
  * </ul>
  *
- * {@code SET LOCAL synchronous_commit=off} per batch transaction: bounded 200ms WAL
+ * <p>{@code SET LOCAL synchronous_commit=off} per batch transaction: bounded 200ms WAL
  * flush window vs UNLOGGED table's unbounded checkpoint-interval loss (ADR-12).
  */
 @Service
@@ -54,6 +56,7 @@ public class OutboxBatchWriter implements SmartLifecycle {
     private static final Logger log = LoggerFactory.getLogger(OutboxBatchWriter.class);
 
     private static final int DEFAULT_FLUSH_THRESHOLD = 100;
+
     /** ~1KB per intent → bounded at ~10MB heap worst-case during a Postgres outage. */
     private static final int DEFAULT_QUEUE_CAPACITY  = 10_000;
 
@@ -72,14 +75,17 @@ public class OutboxBatchWriter implements SmartLifecycle {
     private volatile boolean running;
 
     private final DataSource     dataSource;
+
     /** All JDBC in this class hops here — the dedicated platform-thread pool (see purgeOutbox). */
     private final Scheduler      jdbcScheduler;
+
     private final MeterRegistry  meterRegistry;
 
     private final int flushThreshold;
     private final int queueCapacity;
     private final LinkedBlockingQueue<AlertIntent> queue;
     private final Semaphore flushPermit = new Semaphore(1);
+
     /** Volatile: written by start()/stop(), read by submitting lane/jdbc threads in wakeFlusher(). */
     private volatile ScheduledExecutorService scheduler;
 
@@ -88,8 +94,10 @@ public class OutboxBatchWriter implements SmartLifecycle {
         this(dataSource, jdbcScheduler, meterRegistry, DEFAULT_QUEUE_CAPACITY, DEFAULT_FLUSH_THRESHOLD);
     }
 
-    /** Package-private: lets tests use a tiny capacity/threshold to drive the drop and
-     *  flush paths deterministically without filling 10,000 entries. */
+    /**
+     * Package-private: lets tests use a tiny capacity/threshold to drive the drop and
+     * flush paths deterministically without filling 10,000 entries.
+     */
     OutboxBatchWriter(DataSource dataSource, Scheduler jdbcScheduler, MeterRegistry meterRegistry,
                       int queueCapacity, int flushThreshold) {
         this.dataSource     = dataSource;
@@ -119,11 +127,12 @@ public class OutboxBatchWriter implements SmartLifecycle {
      * hot path produced is already enqueued. Stops the periodic flusher, then drives a final
      * drain-flush of the whole queue against a bounded deadline.
      *
-     * No-progress guard: a failed flush re-queues its batch (idempotent {@code ON CONFLICT (id) DO NOTHING}),
-     * so under a Postgres outage the queue size stays flat — we detect that and break early
-     * rather than busy-spinning to the deadline. Anything still queued at exit is the existing
-     * ADR-12 loss window (table intact; bounded), now reported via
-     * {@code rpe.shutdown.forced{component=outbox}} + {@code rpe.outbox.dropped{reason=shutdown_timeout}}.
+     * <p>No-progress guard: a failed flush re-queues its batch (idempotent
+     * {@code ON CONFLICT (id) DO NOTHING}), so under a Postgres outage the queue size stays
+     * flat — we detect that and break early rather than busy-spinning to the deadline. Anything
+     * still queued at exit is the existing ADR-12 loss window (table intact; bounded), now
+     * reported via {@code rpe.shutdown.forced{component=outbox}} +
+     * {@code rpe.outbox.dropped{reason=shutdown_timeout}}.
      */
     @Override
     public void stop() {
@@ -180,16 +189,16 @@ public class OutboxBatchWriter implements SmartLifecycle {
      * it owns the purge — relay_role has no DELETE privilege). FAILED rows are
      * intentionally excluded: they require operator review before removal.
      *
-     * Runs hourly with a 5-minute startup delay. The DELETE is dispatched to {@code jdbcScheduler}
-     * — the dedicated platform-thread pool — and NOT run on the scheduling thread: with
-     * {@code spring.threads.virtual.enabled=true} (application.yml) Boot auto-configures a
-     * VT-backed {@code SimpleAsyncTaskScheduler} for {@code @Scheduled}, and PgJDBC's
-     * {@code synchronized} internals pin a VT carrier for the statement's whole duration (here up
-     * to the 60s query timeout, hourly, against a table sized for 7 days of alerts). JDBC on a
-     * dedicated platform pool is a JVM-level constraint, not a preference (Architecture Spec Immutable
-     * Constraints); this method previously claimed to honour it while doing the opposite
-     * (arch-audit). {@code block()} parks the scheduling VT without pinning. Same shape as
-     * {@code OutboxMetrics.refresh}.
+     * <p>Runs hourly with a 5-minute startup delay. The DELETE is dispatched to
+     * {@code jdbcScheduler} — the dedicated platform-thread pool — and NOT run on the
+     * scheduling thread: with {@code spring.threads.virtual.enabled=true} (application.yml)
+     * Boot auto-configures a VT-backed {@code SimpleAsyncTaskScheduler} for {@code @Scheduled},
+     * and PgJDBC's {@code synchronized} internals pin a VT carrier for the statement's whole
+     * duration (here up to the 60s query timeout, hourly, against a table sized for 7 days
+     * of alerts). JDBC on a dedicated platform pool is a JVM-level constraint, not a
+     * preference (Architecture Spec Immutable Constraints); this method previously claimed
+     * to honour it while doing the opposite (arch-audit). {@code block()} parks the
+     * scheduling VT without pinning. Same shape as {@code OutboxMetrics.refresh}.
      */
     @Scheduled(
             fixedDelay = 3_600_000,
@@ -220,11 +229,13 @@ public class OutboxBatchWriter implements SmartLifecycle {
         }
     }
 
-    /** Bounded backpressure before an intent is declared undeliverable: when the queue is full the
-     *  submitting thread waits this long for the flusher to drain a slot. Steady-state (queue not full)
-     *  this is a non-blocking O(1) offer, so the ADR-12 fast path is unchanged; only a backed-up queue
-     *  (Postgres slow/down) blocks — and the return value then lets the CALLER preserve the event on the
-     *  DLT instead of acking a lost alert (arch-audit HIGH-1). */
+    /**
+     * Bounded backpressure before an intent is declared undeliverable: when the queue is full the
+     * submitting thread waits this long for the flusher to drain a slot. Steady-state (queue not full)
+     * this is a non-blocking O(1) offer, so the ADR-12 fast path is unchanged; only a backed-up queue
+     * (Postgres slow/down) blocks — and the return value then lets the CALLER preserve the event on the
+     * DLT instead of acking a lost alert (arch-audit HIGH-1).
+     */
     private static final long OFFER_BACKPRESSURE_MS = 250;
 
     /**
@@ -236,9 +247,11 @@ public class OutboxBatchWriter implements SmartLifecycle {
      *         MUST then route the event to the DLT (not ack), so a Postgres outage never turns into a
      *         silently-dropped alert on a committed offset.
      *
-     * Called from a lane VT via:
-     *   Boolean enqueued = Mono.fromCallable(() -> outboxWriter.submit(intent))
-     *       .subscribeOn(jdbcScheduler).block();
+     * <p>Called from a lane VT via:
+     * <pre>{@code
+     * Boolean enqueued = Mono.fromCallable(() -> outboxWriter.submit(intent))
+     *     .subscribeOn(jdbcScheduler).block();
+     * }</pre>
      */
     public boolean submit(AlertIntent intent) {
         boolean enqueued;
