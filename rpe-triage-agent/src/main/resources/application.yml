@@ -143,6 +143,7 @@ triage:
     rpm: ${TRIAGE_LLM_RPM:30}     # the billing breaker
     retry-max-attempts: 3         # initial + 2 retries — transport/429/5xx ONLY
     retry-backoff-ms: 1000
+    max-tool-rounds: 3            # tool rounds before the verdict call; ceiling 3, ollama-local sets 1
   sweep:
     stale-after: 5m
     batch: 50
