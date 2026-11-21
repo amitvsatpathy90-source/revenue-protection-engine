@@ -69,7 +69,8 @@ We build `rpe-triage-agent` as an independent Spring Boot module with these bind
 9. **Runtime:** single MVC + virtual-threads surface. Blocking `ChatClient` call on a VT, wrapped in the R4j stack
    (TimeLimiter via `CompletableFuture` on the VT executor). No WebFlux in this module.
 10. **Provider:** abstracted behind Spring AI; key via env (`SPRING_AI_*`), never committed. Local-model fallback is out
-    of scope (8GB host constraint).
+    of scope (8GB host constraint). Partially superseded for a dev-only Ollama profile by ADR-31; still not a production
+    fallback.
 
 ### 3.1 Scope of binding
 
@@ -207,6 +208,7 @@ is disposable), no core-pipeline change, no external contract.
 
 | Date       | Version | Author | Change                                                                                                                                                                                                                                                                                                                                                                                                    |
 |------------|---------|--------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-11-21 | 1.3.0   | amit   | Additive pointer: §3.10 partially superseded by ADR-31 (dev-only Ollama chat provider). No change to the advisory-only decision.                                                                                                                                                                                                                                                                          |
 | 2026-11-14 | 1.2.0   | amit   | Additive observability amendment: `triage_verdict_signal_total{signal}` added to §5.3 locked signals; §6.2 detection note updated. No decision change.                                                                                                                                                                                                                                                    |
 | 2026-07-04 | 1.1.0   | amit   | Doc-drift audit correction: flipped Status PROPOSED → ACCEPTED. Implementation completed and has been treated as settled fact by ADR-17 (§Stage 0), ADR-18, ADR-23, ADR-24, Architecture Spec, README.md, and `ADR-15.md` since 2026-06-17 — the status field was the only place still saying otherwise. Removed the dangling `arch-decisions-log.md` cross-reference (file does not exist in this repo). |
 | 2026-06-12 | 1.0.0   | amit   | Initial draft — status PROPOSED                                                                                                                                                                                                                                                                                                                                                                           |

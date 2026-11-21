@@ -3,6 +3,22 @@
 Version history for revenue-protection-engine. Newest first. Each entry is a documentation/design
 milestone; test counts are per service (detection / relay / alert / triage) at that point in time.
 
+## v1.21 — 2026-11-21
+
+Ollama dev chat provider and a tools-free verdict call (`rpe-triage-agent`):
+
+- `ollama-local` profile (OpenAI client at `/v1`, OTLP metrics export off); `triage.llm.max-tool-rounds`
+  (default 3, valid 1..3, startup-validated), set to 1 in `ollama-local`.
+- The verdict call after the last permitted tool round carries no tool definitions; the violated `validated()` rule
+  is logged on failure.
+- `scripts/triage-ollama-replay/`: diagnostic replay harness for two captured requests (not an e2e test).
+- Measured on llama3.2:3b, Ollama 0.40.16, lab only: 8/20 `LLM_TRIAGED` in a mixed batch; all degraded rows
+  `schema-validation`; 4/4 logged failures `verdict missing narrative`. Not measured: OpenAI behavior, the 8B P2 metric.
+  See ADR-31.
+- Not done: prompt change for the narrative, native Ollama starter comparison, OTEL export fix for other profiles.
+- **Tests:** harness: 9 offline pytest cases. Triage: 72 run, 0 failures, 0 errors, 0 skipped
+  (`mvn -f rpe-triage-agent/pom.xml verify`), measured 2026-11-21. No new Java tests.
+
 ## v1.20 — 2026-11-14
 
 Per-verdict evidence-grounding signals (observability only; `rpe-triage-agent`, no contract change):

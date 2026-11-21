@@ -27,6 +27,46 @@ docker compose --profile triage up -d            # containerised, from repo root
 Without `SPRING_AI_OPENAI_API_KEY` the module starts normally and every verdict is
 `DEGRADED_RULE_BASED` — that is the designed degraded mode, not an error.
 
+## Local Ollama smoke (ADR-31)
+
+Requires Compose infrastructure and Ollama to be running, with `llama3.2:3b` available locally.
+
+Start the triage service from the repository root in a separate terminal:
+
+```bash
+TRIAGE_OLLAMA_MODEL=llama3.2:3b \
+mvn -f rpe-triage-agent/pom.xml spring-boot:run \
+  -Dspring-boot.run.profiles=dev,ollama-local
+```
+
+Inject 20 synthetic alerts across the three detection rules:
+
+```bash
+for i in $(seq 1 20); do
+  RULE=$(printf '%s\n' velocity zscore geo |
+    sed -n "$(( (i - 1) % 3 + 1 ))p")
+  ID=$(uuidgen | tr 'A-Z' 'a-z')
+
+  printf '{"alertId":"%s","eventId":"evt-batch-%s","accountId":"acc-smoke-1","ruleName":"%s","reason":"smoke test","producedAt":"%s","schemaVersion":"1"}\n' \
+    "$ID" "$i" "$RULE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" |
+    docker compose exec -T redpanda rpk topic produce payment.alerts -k acc-smoke-1
+done
+```
+
+Inspect the resulting triage outcomes:
+
+```bash
+docker compose exec -T postgres psql -U rpe -d rpe -c \
+  "SELECT rule_name, triage_status, verdict->>'degradedReason' AS reason, count(*)
+   FROM triage.triaged_alerts
+   WHERE created_at > now() - interval '30 minutes'
+   GROUP BY 1,2,3
+   ORDER BY 1,2;"
+```
+
+**Note:** This is a manual application-level smoke test. Alerts are injected directly into `payment.alerts`, bypassing
+detection and relay. It does not exercise the full pipeline.
+
 ## Key signals (port 8081)
 
 | Metric                                          | Meaning                                                                                       |
@@ -53,8 +93,8 @@ kafka-console-consumer --bootstrap-server localhost:19092 --topic payment.alerts
 - Tools are read-only and account-scoped via `ToolContext` (model-supplied account ids
   are verified; mismatch = bounded error + counter).
 - Evidence items must reference tool-call IDs from this run; fabricated evidence is
-  stripped, confidence downgraded, `evidence_stripped=true`. Per-verdict signals
-  (`EVIDENCE_STRIPPED`, `EVIDENCE_PARTIAL_DROP`, `NO_EVIDENCE`) are counted as
+  stripped, confidence downgraded, `evidence_stripped=true`. Per-verdict signals (`EVIDENCE_STRIPPED`,
+  `EVIDENCE_PARTIAL_DROP`, `NO_EVIDENCE`) are counted as
   `triage.verdict.signal{signal}` and logged by `alert_id`. Diagnostic only: they do not
   calibrate confidence or route to review, and the checks cover provenance, not correctness.
 - `DegradedTriageFallback` has zero Spring AI imports — it must survive the dependency

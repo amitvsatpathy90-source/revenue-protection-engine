@@ -124,6 +124,8 @@ Ollama version: 0.40.16. Model digest: a80c4f17acd5. Date: 2026-11-20.
 - Results apply only to this model, Ollama version and fixture set. They say nothing about other model sizes,
   providers, production reliability, or the P2 8B tool-call-validity metric.
 - Out of scope: per-trial output files, latency, `finish_reason`, a `--model` override.
+- `b` checks the JSON Schema only. The application also rejects a blank `narrative`, absent `evidence`, out-of-range
+  `confidence` and a blank `toolCallId` (`TriageVerdict.validated()`), so `b` can overstate application validity.
 
 ## Refreshing fixtures
 

@@ -2,13 +2,13 @@
 asset_id: adr-30-rag-augmented-triage-pgvector
 asset_path: docs/adrs/ADR-30.md
 asset_type: adr
-version: 1.5.0
+version: 1.5.1
 created: 2026-09-04
-last_updated: 2026-11-09
+last_updated: 2026-11-21
 status: ACCEPTED
 reversal_cost: MEDIUM
 owner: amit
-tags: [rag, pgvector, keyed-lookup, triage, resilience4j, retrieval, spring-ai, advisory]
+tags: [ rag, pgvector, keyed-lookup, triage, resilience4j, retrieval, spring-ai, advisory ]
 ---
 
 # ADR-30 — RAG-Augmented Triage: pgvector corpus, keyed rule lookup (v1), independent R4j boundaries
@@ -39,22 +39,31 @@ retrieval key (rule type/detector name only, never raw alert free-text).
 
 **v1 retrieval path (D3, implemented v1.5.0): exact `rule_name` lookup, no embedding call.**
 `TriageService.fetchRagContext` calls `RagRetrievalClient.retrieveByRule(alert.ruleName(), topK)` →
-`TriageVectorRepository.findByRuleName` (`WHERE rule_name = ? ORDER BY id LIMIT ?`) via raw JDBC on the existing dedicated
+`TriageVectorRepository.findByRuleName` (`WHERE rule_name = ? ORDER BY id LIMIT ?`) via raw JDBC on the existing
+dedicated
 platform-thread pool, behind its own R4j boundary `triage.rag.retrieval.*` (ADR-29). The call runs after the inbox dedup
-insert and before the LLM call, and is skipped unconditionally when the chat CB is open. `retrieve` (cosine `<=>` TopK) and
-`similaritySearch` remain in the codebase, as do `RagEmbeddingClient` and its `triage.rag.embedding.*` boundary, for the v2
+insert and before the LLM call, and is skipped unconditionally when the chat CB is open. `retrieve` (cosine `<=>` TopK)
+and
+`similaritySearch` remain in the codebase, as do `RagEmbeddingClient` and its `triage.rag.embedding.*` boundary, for the
+v2
 historical-alerts similarity corpus; none of them is on the v1 path.
 
-**Why keyed lookup, not vector search (D3):** the v1 corpus is one row per detector and the query is already the categorical
-rule name, so vector search is a key lookup through a lossy channel. See "Amendment 1.4.0 Decisions" for the reasoning and
+**Why keyed lookup, not vector search (D3):** the v1 corpus is one row per detector and the query is already the
+categorical
+rule name, so vector search is a key lookup through a lossy channel. See "Amendment 1.4.0 Decisions" for the reasoning
+and
 the retrieval-selection evaluation behind D1.
 
-**Why not Spring AI's `VectorStore` abstraction directly (still applies to any similarity path):** `VectorStore`'s public
+**Why not Spring AI's `VectorStore` abstraction directly (still applies to any similarity path):** `VectorStore`'s
+public
 contract is `similaritySearch(SearchRequest)` / `similaritySearch(String query)` only — `SearchRequest` carries a `String
 query` field, and embedding happens opaquely inside the call. There is no vector-input overload on the interface, so a
-wrapped call cannot produce two independently-measurable, independently-circuit-broken sub-boundaries (embedding-side rate
-limits are OpenAI-tier-shaped; retrieval-side is a local Postgres query — different failure classes, ADR-29). A similarity
-path therefore keeps the explicit two-call shape: `RagEmbeddingClient` (own R4j boundary) then `RagRetrievalClient.retrieve`
+wrapped call cannot produce two independently-measurable, independently-circuit-broken sub-boundaries (embedding-side
+rate
+limits are OpenAI-tier-shaped; retrieval-side is a local Postgres query — different failure classes, ADR-29). A
+similarity
+path therefore keeps the explicit two-call shape: `RagEmbeddingClient` (own R4j boundary) then
+`RagRetrievalClient.retrieve`
 (own R4j boundary), fronted by `TriageVectorRepository` so pgvector-dialect coupling stays in one class.
 
 ## Alternatives Considered
@@ -77,7 +86,8 @@ path therefore keeps the explicit two-call shape: `RagEmbeddingClient` (own R4j 
 - **Ollama / local embedding model** — rejected. ADR-15 §3.10 already rules out local-model fallback ("8GB host
   constraint"); no reason to add a second provider dependency for embeddings alone. Scope note (v1.4.0): Ollama is used
   only as a **test-scope** embedding generator for the retrieval eval harness (`spring-ai-starter-model-ollama`, test
-  scope); no runtime provider change.
+  scope); no runtime provider change. As of ADR-31, Ollama is also a dev-only chat provider (profile `ollama-local`);
+  embedding scope is unchanged.
 - **Retrieval before the inbox insert** — rejected; the insert must stay unconditionally first (the AI triage ruleset
   §2), and a pre-insert retrieval call risks delaying the dedup gate itself.
 - **Shared R4j instance with `triage.llm`** — rejected per ADR-29. Different call shape, separate OpenAI rate-limit
@@ -135,10 +145,13 @@ path therefore keeps the explicit two-call shape: `RagEmbeddingClient` (own R4j 
 **Negative:**
 
 - **v1 retrieval gives no semantic matching.** Keyed lookup returns the detector's own row, and nothing else; it cannot
-  surface cross-rule context. Accepted for a one-row-per-detector corpus; the similarity path (v2) is where that changes.
-  RAG goes live in v1.5.0 for the first time against the seeded corpus: no faithfulness measurement exists, and the prompt
+  surface cross-rule context. Accepted for a one-row-per-detector corpus; the similarity path (v2) is where that
+  changes.
+  RAG goes live in v1.5.0 for the first time against the seeded corpus: no faithfulness measurement exists, and the
+  prompt
   grows by one chunk per alert (token-cost increase, unmeasured).
-- **No UNIQUE constraint on `rule_name`.** `ORDER BY id` makes a duplicate row deterministic, not impossible. A constraint
+- **No UNIQUE constraint on `rule_name`.** `ORDER BY id` makes a duplicate row deterministic, not impossible. A
+  constraint
   is a separate decision (see Amendment 1.4.0).
 - **Bypassing `VectorStore` forfeits Spring AI's managed abstraction.** No framework-provided schema auto-configuration,
   no standardized multi-store test harness, no automatic future Spring AI `VectorStore` feature (e.g. hybrid
@@ -163,10 +176,13 @@ path therefore keeps the explicit two-call shape: `RagEmbeddingClient` (own R4j 
   paths ADR-15 §8 accounts for. Mitigated by a dedicated injection-corpus test (testing bar #2), not eliminated.
 - **Shutdown-timeout margin is reduced, not preserved.** The original 20s `timeout-per-shutdown-phase` was sized against
   the chat path's 12s TimeLimiter alone. Worst-case in-flight duration is now `chat-TimeLimiter + retrieval-TimeLimiter`
-  on the v1 path, plus `embedding-TimeLimiter` once a similarity path is enabled. **Provisional resolution:** the combined
-  RAG ceiling stays a padded 5s. That figure assumes a single small-batch OpenAI embedding call (typically sub-2s P99) plus
+  on the v1 path, plus `embedding-TimeLimiter` once a similarity path is enabled. **Provisional resolution:** the
+  combined
+  RAG ceiling stays a padded 5s. That figure assumes a single small-batch OpenAI embedding call (typically sub-2s P99)
+  plus
   a sub-100ms raw pgvector query against a low-hundreds-row HNSW index. The 5s pads for tail latency across both calls
-  without a measured sample. Sum: `12s + 5s = 17s`, so `timeout-per-shutdown-phase: 25s`; the previous 20s does not clear
+  without a measured sample. Sum: `12s + 5s = 17s`, so `timeout-per-shutdown-phase: 25s`; the previous 20s does not
+  clear
   the sum with margin. **The 25s value was sized for the two-call path (now conservative for v1) and rests on OpenAI's
   documented endpoint characteristics, not a measured sample.** Re-derive it against real P50/P99 once the RAG latency
   sample (Negative-section item below) lands. Tighten the phase timeout down from 25s if the real number permits.
@@ -303,8 +319,8 @@ removed silently. Switching RAG off is cheap; unwinding its schema and contract 
 - `rpe-triage-agent/src/main/resources/db/migration/V2__create_triage_rag_corpus.sql`,
   `V3__seed_triage_rag_corpus.sql` — corpus schema and the three-row seed (never edited after apply;
   Flyway checksum).
-- `rpe-triage-agent/src/test/java/io/rpe/triage/rageval/` — retrieval-selection harness behind D1
-  (merged in `19307b1`, PR #44).
+- `rpe-triage-agent/src/test/java/io/rpe/triage/rageval/` — retrieval-selection harness behind D1 (merged in `19307b1`,
+  PR #44).
 - `docs/adrs/ADR-15.md` — parent decision this ADR extends.
 - `docs/adrs/ADR-29.md` — no-global-R4j-defaults rule.
 - `docs/adrs/ADR-11.md` — additive-only contract rule behind the `corpus_mode` field.
@@ -325,3 +341,4 @@ removed silently. Switching RAG off is cheap; unwinding its schema and contract 
 | 1.3.0   | 2026-09-12 | @amit  | Amendment — PROPOSED. Closes 3 Residuals via verification pass: embedding-retry wiring confirmed (bytecode), `gen_ai` embedding spans confirmed (docs), `EvidenceValidator`/`ragSources[]` closed as not-applicable (RAG narrative-only by design). `rag.corpus.last_ingested_at` staleness metric implemented (cached-at-startup).                    |
 | 1.4.0   | 2026-11-04 | @amit  | Amendment — PROPOSED. Adds retrieval-selection evaluation findings (D1: TopK for any similarity path), supersedes the placeholder-gate proposal (D2), decides exact `rule_name` lookup for v1 (D3, implementation pending); updates Residuals and replaces Testing Bar #8. Status flips with the Decision-section rewrite in the implementing release. |
 | 1.5.0   | 2026-11-09 | @amit  | Amendment — ACCEPTED. Implements D3: `TriageService` retrieves by exact `rule_name` (`retrieveByRule` → `findByRuleName`), no embedding call on v1. Adds `triage.rag.retrieval.empty` counter and 3s statement timeout; layout aligned to standard ADR format. `corpus_mode`, embedding code, UNIQUE constraint stay separate decisions.               |
+| 1.5.1   | 2026-11-21 | @amit  | Scope note annotated per ADR-31. No decision change.                                                                                                                                                                                                                                                                                                   |
