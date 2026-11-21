@@ -301,11 +301,20 @@ public class TriageAgent {
             meterRegistry.counter(TRIAGE_SCHEMA_FAILURE).increment();
             throw new TriageAgentException("empty-completion");
         }
+        TriageVerdict parsed;
         try {
-            return outputConverter.convert(content).validated();
-        } catch (RuntimeException e) {   // converter + record validation throw only unchecked
+            parsed = outputConverter.convert(content);
+        } catch (RuntimeException e) {   // Jackson binding failure
             meterRegistry.counter(TRIAGE_SCHEMA_FAILURE).increment();
-            // Exception class only — completion bodies never reach logs
+            throw new TriageAgentException("schema-validation", e);
+        }
+        try {
+            return parsed.validated();
+        } catch (IllegalArgumentException | NullPointerException e) {   // validated() rule, or JSON null body
+            meterRegistry.counter(TRIAGE_SCHEMA_FAILURE).increment();
+            // validated() messages name the violated field only, never values
+            log.warn("Verdict validation failed: {}",
+                    e instanceof NullPointerException ? "null-verdict" : e.getMessage());
             throw new TriageAgentException("schema-validation", e);
         }
     }
