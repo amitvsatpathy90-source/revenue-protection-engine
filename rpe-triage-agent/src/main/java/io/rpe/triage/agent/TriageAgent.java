@@ -24,6 +24,8 @@ import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.model.tool.ToolExecutionResult;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -52,7 +54,8 @@ public class TriageAgent {
     public static final String TRIAGE_SCHEMA_FAILURE = "triage.schema.failure";
 
     /**
-     * Enforced in code. Saturation shows in the triage_tool_rounds histogram (ADR-15 §8.3).
+     * Hard ceiling, enforced in code; the configured budget may only lower it.
+     * Saturation shows in the triage_tool_rounds histogram (ADR-15 §8.3).
      */
     static final int MAX_TOOL_ROUNDS = 3;
 
@@ -103,8 +106,12 @@ public class TriageAgent {
     private final BeanOutputConverter<TriageVerdict> outputConverter;
     private final DistributionSummary roundsHistogram;
     private final MeterRegistry meterRegistry;
+    private final int toolRounds;   // effective budget, 1..MAX_TOOL_ROUNDS
     private final Logger devPromptLog = LoggerFactory.getLogger("triage.prompt.dev");
 
+    /**
+     * Additive ctor: existing callers and tests keep the full {@link #MAX_TOOL_ROUNDS} budget.
+     */
     public TriageAgent(
             TriageLlmClient llmClient,
             EvidenceValidator evidenceValidator,
@@ -112,6 +119,27 @@ public class TriageAgent {
             ObjectMapper objectMapper,
             TriageProperties props,
             MeterRegistry meterRegistry) {
+        this(llmClient, evidenceValidator, triageTools, objectMapper, props, meterRegistry, MAX_TOOL_ROUNDS);
+    }
+
+    /**
+     * @param toolRounds tool-execution rounds allowed before the verdict call, 1..{@link #MAX_TOOL_ROUNDS}
+     *                   ({@code triage.llm.max-tool-rounds}); fails startup when out of range
+     */
+    @Autowired
+    public TriageAgent(
+            TriageLlmClient llmClient,
+            EvidenceValidator evidenceValidator,
+            TriageTools triageTools,
+            ObjectMapper objectMapper,
+            TriageProperties props,
+            MeterRegistry meterRegistry,
+            @Value("${triage.llm.max-tool-rounds:3}") int toolRounds) {
+        if (toolRounds < 1 || toolRounds > MAX_TOOL_ROUNDS) {
+            throw new IllegalArgumentException(
+                    "triage.llm.max-tool-rounds must be 1.." + MAX_TOOL_ROUNDS + ", was " + toolRounds);
+        }
+        this.toolRounds = toolRounds;
         this.llmClient = llmClient;
         this.toolCallingManager = ToolCallingManager.builder().build();
         this.evidenceValidator = evidenceValidator;
@@ -158,6 +186,9 @@ public class TriageAgent {
                 .toolContext(Map.of(TriageTools.CTX_ACCOUNT_ID, alert.accountId()))
                 .build();
 
+        // Verdict-round options: same model defaults and toolContext, no tool definitions on the wire
+        ToolCallingChatOptions verdictOptions = options.mutate().toolCallbacks(List.of()).build();
+
         Prompt prompt = new Prompt(buildMessages(alert, ragContext), options);
         logPromptForDevIfEnabled(prompt);
 
@@ -165,7 +196,7 @@ public class TriageAgent {
         int rounds = 0;
 
         ChatResponse response = llmClient.call(prompt);
-        for (int round = 0; round < MAX_TOOL_ROUNDS; round++) {
+        for (int round = 0; round < toolRounds; round++) {
             if (!response.hasToolCalls()) {
                 break;
             }
@@ -173,14 +204,15 @@ public class TriageAgent {
             assistant.getToolCalls().forEach(tc -> executedToolCallIds.add(tc.id()));
 
             ToolExecutionResult toolResult = toolCallingManager.executeToolCalls(prompt, response);
-            prompt = new Prompt(toolResult.conversationHistory(), options);
             rounds++;
+            // Last permitted round: the next call must be the verdict, so withhold tools
+            prompt = new Prompt(toolResult.conversationHistory(), rounds >= toolRounds ? verdictOptions : options);
             response = llmClient.call(prompt);
         }
         roundsHistogram.record(rounds);
 
         if (response.hasToolCalls()) {
-            // Budget exhausted and the model still wants tools — a 4th round would
+            // Budget exhausted and the model still returned tool calls — executing them would
             // breach the binding cap; degraded is the honest outcome
             throw new TriageAgentException("round-budget-exhausted");
         }

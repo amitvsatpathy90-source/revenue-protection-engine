@@ -17,8 +17,9 @@ triage:
     time-limit-ms: 45000
     slow-call-ms: 30000
     rpm: 1000                              # no billing breaker locally
+    max-tool-rounds: 1                     # 3B emits a tool call instead of the verdict after round 1
   kafka:
-    # Poll budget: 1 record x 4 calls x 45s = 180s < 300s max.poll.interval.ms
+    # Poll budget: 1 record x 2 calls x 45s = 90s < 300s max.poll.interval.ms
     max-poll-records: 1
     max-poll-interval-ms: 300000
 
