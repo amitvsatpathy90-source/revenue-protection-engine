@@ -1,0 +1,36 @@
+server:
+  port: 8084
+  shutdown: graceful
+
+spring:
+  application:
+    name: rpe-ingest-service
+  lifecycle:
+    timeout-per-shutdown-phase: 25s
+  threads:
+    virtual:
+      enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+ingest:
+  razorpay:
+    # Blank fails startup: the service never runs without signature verification
+    webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
+  max-event-age: 15m
+  max-future-skew: 5m
+  currency: INR
+  # Synthetic geography: each account maps to one of these, stable across restarts
+  home-locations:
+    - lat: 28.6139            # Delhi
+      lon: 77.2090
+    - lat: 19.0760            # Mumbai
+      lon: 72.8777
+    - lat: 12.9716            # Bengaluru
+      lon: 77.5946
+    - lat: 22.5726            # Kolkata
+      lon: 88.3639
