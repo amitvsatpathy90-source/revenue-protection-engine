@@ -30,8 +30,10 @@ and non-2xx treated as failure. A webhook carries no `lat`/`lon`.
 1. New module `rpe-ingest-service` (own pom). It is the only public RPE surface.
 2. `POST /webhooks/razorpay`: verify `X-Razorpay-Signature` (HMAC-SHA256 over the raw request bytes, constant-time
    compare) before parsing. The service refuses to start without a webhook secret.
-3. Acknowledge 2xx only after a durable Postgres inbox insert. Signature failure: 4xx. Inbox failure: 5xx (the
-   gateway retries). Valid but not forwarded events: 2xx.
+3. Acknowledge 2xx only after a durable Postgres inbox insert. Signature checked first: failure is 401. An authentic
+   request without the delivery-id header is 400. Every other authentic outcome (forwardable, ignored, rejected,
+   stale, unparseable, duplicate) is stored or recognised and acknowledged 2xx, since a retry cannot change it.
+   Storage failure is 5xx (the gateway retries).
 4. No logic depends on event order. Only `payment.captured` is forwarded; every other event is recorded `IGNORED`.
 5. Two uniqueness constraints: `event_id` (header `x-razorpay-event-id`, delivery dedup) and `payment_id` among
    forwarded rows (business dedup). `PaymentEvent.eventId` = payment id.
