@@ -37,7 +37,8 @@ and non-2xx treated as failure. A webhook carries no `lat`/`lon`.
    forwarded rows (business dedup). `PaymentEvent.eventId` = payment id.
 6. Mapping: `accountId` from `notes.accountId`; missing or unmappable → 2xx, stored `REJECTED` with a reason, not
    forwarded. `lat`/`lon` from a deterministic per-account home location in config, with an optional scenario
-   override read from `notes`. `schemaVersion` "1".
+   override read from `notes`. `schemaVersion` "1". Only INR is accepted; other currencies are stored REJECTED
+   (unsupported-currency).
 7. Staleness gate: captured events older than `ingest.max-event-age` are stored `STALE` and not forwarded (detection
    windows use broker ingest time).
 8. The inbox records the server-side `received_at`. One active poller publishes pending rows to `payment.events`
@@ -66,7 +67,9 @@ and non-2xx treated as failure. A webhook carries no `lat`/`lon`.
 ## Residual Risks
 
 - Whether custom `notes` set at order creation reach the payment entity is not verified.
-- The `amount` unit and the `payment.captured` field paths are not verified against the full payload.
+- Verified against Razorpay's docs samples: `amount` is in the smallest currency sub-unit, and `payment.captured`
+  carries `payment.entity.{id,amount,currency,notes}` plus a top-level event `created_at`. Not verified: whether
+  `notes` set on the order propagate to the payment entity in live test-mode webhooks.
 - The message key convention for `payment.events` is not confirmed; match detection's.
 - Broker behavior with explicit old record timestamps (topic timestamp type, timestamp-difference bounds) is not
   verified on the compose broker.
