@@ -137,7 +137,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
       # Resolve triage/alert schemas in the local Compose stack (no K8s role-level search_path).
-      DB_URL: jdbc:postgresql://postgres:5432/rpe?currentSchema=triage,alert,public
+      DB_URL: jdbc:postgresql://postgres:5432/rpe?currentSchema=triage,alert
       DB_USER: rpe
       DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       REDIS_HOST: redis
