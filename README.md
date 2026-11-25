@@ -2,9 +2,18 @@
 
 Synthetic payment-event stream → rule-based anomaly detection → Kafka alerts, with observability.
 
-**Portfolio / proof-of-capability artifact. Lab benchmarks only — never production claims.**
+> **Lab/reference implementation - not a production deployment.**
 
 ---
+
+## What this is
+
+A four-service payment anomaly detection pipeline (detection, relay, alert
+actioning, advisory triage). Detection preserves per-account ordering and
+evaluates velocity, z-score, geo-proximity and deduplication in one atomic
+Redis Lua gate, then publishes through a PostgreSQL outbox with at-least-once
+delivery and deterministic UUIDv5 alert IDs. Spring AI triage is advisory-only
+and off the detection and alert hot path.
 
 ## Architecture
 
@@ -121,7 +130,7 @@ Canonical container topology: `docker compose --env-file .env -f deploy/docker-c
 | Event dedup           | Best-effort            | 1s AOF window on hard crash; replay safe via deterministic alert_id                                                             |
 | Alert intent (outbox) | Best-effort            | Up to 50ms batch flush window on app crash                                                                                      |
 | Alert delivery        | At-least-once on topic | Kafka transactional producer; a relay crash between tx-commit and status UPDATE re-sends — every consumer dedupes on `alert_id` |
-| Alert actioning       | Exactly-once           | UUIDv5 alert_id + processed_alerts ON CONFLICT DO NOTHING                                                                       |
+| Alert actioning       | Effectively-once           | UUIDv5 alert_id + processed_alerts ON CONFLICT DO NOTHING                                                                       |
 
 ---
 
