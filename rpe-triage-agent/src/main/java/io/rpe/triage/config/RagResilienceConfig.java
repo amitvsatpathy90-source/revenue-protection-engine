@@ -73,7 +73,9 @@ public class RagResilienceConfig {
 
         var retryRegistry = RetryRegistry.of(RetryConfig.custom()
                 .maxAttempts(p.retryMaxAttempts())
-                .intervalFunction(IntervalFunction.ofExponentialRandomBackoff(p.retryBackoffMs(), 2.0, 0.5))  // jittered — avoid synchronized retry waves (RPE-07)
+                .intervalFunction(IntervalFunction.ofExponentialRandomBackoff(p.retryBackoffMs(),
+                        2.0,
+                        0.5))  // jittered — avoid synchronized retry waves (RPE-07)
                 .retryOnException(RagResilienceConfig::isRetryableEmbeddingException)
                 .build());
 
@@ -94,9 +96,9 @@ public class RagResilienceConfig {
                 .timeoutDuration(Duration.ZERO)
                 .build());
 
-        CircuitBreaker cb       = cbRegistry.circuitBreaker(EMBEDDING_NAME);
-        Retry retry             = retryRegistry.retry(EMBEDDING_NAME);
-        Bulkhead bulkhead       = bulkheadRegistry.bulkhead(EMBEDDING_NAME);
+        CircuitBreaker cb = cbRegistry.circuitBreaker(EMBEDDING_NAME);
+        Retry retry = retryRegistry.retry(EMBEDDING_NAME);
+        Bulkhead bulkhead = bulkheadRegistry.bulkhead(EMBEDDING_NAME);
         RateLimiter rateLimiter = rateLimiterRegistry.rateLimiter(EMBEDDING_NAME);
 
         TaggedCircuitBreakerMetrics.ofCircuitBreakerRegistry(cbRegistry).bindTo(meterRegistry);
@@ -148,7 +150,7 @@ public class RagResilienceConfig {
                 .build());
 
         CircuitBreaker cb = cbRegistry.circuitBreaker(RETRIEVAL_NAME);
-        Retry retry       = retryRegistry.retry(RETRIEVAL_NAME);
+        Retry retry = retryRegistry.retry(RETRIEVAL_NAME);
         Bulkhead bulkhead = bulkheadRegistry.bulkhead(RETRIEVAL_NAME);
 
         TaggedCircuitBreakerMetrics.ofCircuitBreakerRegistry(cbRegistry).bindTo(meterRegistry);

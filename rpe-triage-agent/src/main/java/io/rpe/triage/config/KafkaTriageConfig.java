@@ -67,15 +67,17 @@ public class KafkaTriageConfig {
         return new TopicPartition(TRIAGE_DLT_TOPIC, -1);
     }
 
-    /** Transport-security props (SASL_SSL/SCRAM) assembled from env once; folded into the
-     *  consumer + triaged producer factories. PLAINTEXT (lab default) is a no-op (ADR-20). */
+    /**
+     * Transport-security props (SASL_SSL/SCRAM) assembled from env once; folded into the
+     * consumer + triaged producer factories. PLAINTEXT (lab default) is a no-op (ADR-20).
+     */
     private final Map<String, Object> securityProps;
 
     public KafkaTriageConfig(
-            @Value("${rpe.kafka.security.protocol:PLAINTEXT}")           String protocol,
+            @Value("${rpe.kafka.security.protocol:PLAINTEXT}") String protocol,
             @Value("${rpe.kafka.security.sasl-mechanism:SCRAM-SHA-512}") String mechanism,
-            @Value("${KAFKA_SASL_USERNAME:}")       String saslUsername,
-            @Value("${KAFKA_SASL_PASSWORD:}")       String saslPassword,
+            @Value("${KAFKA_SASL_USERNAME:}") String saslUsername,
+            @Value("${KAFKA_SASL_PASSWORD:}") String saslPassword,
             @Value("${KAFKA_TRUSTSTORE_LOCATION:}") String truststoreLocation,
             @Value("${KAFKA_TRUSTSTORE_PASSWORD:}") String truststorePassword) {
         this.securityProps = KafkaSecurity.transportProps(
@@ -83,8 +85,10 @@ public class KafkaTriageConfig {
                 truststoreLocation, truststorePassword);
     }
 
-    /** Shared observability {@link Admin} client (see {@link #triageAdminClient}); bounded close
-     *  at {@link #closeAdminClient()}. */
+    /**
+     * Shared observability {@link Admin} client (see {@link #triageAdminClient}); bounded close
+     * at {@link #closeAdminClient()}.
+     */
     private Admin adminClient;
 
     /**
@@ -112,8 +116,10 @@ public class KafkaTriageConfig {
         return adminClient;
     }
 
-    /** Package-private seam for {@code KafkaAdminSecurityPropsTest}: the exact config map the
-     *  admin client is created from (autoconfigured admin props + transport-security fold). */
+    /**
+     * Package-private seam for {@code KafkaAdminSecurityPropsTest}: the exact config map the
+     * admin client is created from (autoconfigured admin props + transport-security fold).
+     */
     Map<String, Object> adminProps(KafkaAdmin kafkaAdmin) {
         Map<String, Object> props = new HashMap<>(kafkaAdmin.getConfigurationProperties());
         props.putAll(securityProps);

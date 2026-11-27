@@ -35,7 +35,7 @@ public class JdbcTriageInbox implements TriageInbox {
 
     public JdbcTriageInbox(DataSource dataSource,
                            @Qualifier("jdbcExecutor") ExecutorService jdbcExecutor) {
-        this.dataSource   = dataSource;
+        this.dataSource = dataSource;
         this.jdbcExecutor = jdbcExecutor;
     }
 
@@ -43,7 +43,7 @@ public class JdbcTriageInbox implements TriageInbox {
     public boolean tryInsert(UUID alertId, String accountId, String ruleName) {
         return onJdbcPool(() -> {
             String sql = "INSERT INTO triaged_alerts(alert_id, account_id, rule_name) "
-                       + "VALUES (?::uuid, ?, ?) ON CONFLICT (alert_id) DO NOTHING";
+                    + "VALUES (?::uuid, ?, ?) ON CONFLICT (alert_id) DO NOTHING";
             try (Connection conn = dataSource.getConnection();
                  var ps = conn.prepareStatement(sql)) {
                 ps.setQueryTimeout(10);
@@ -63,8 +63,8 @@ public class JdbcTriageInbox implements TriageInbox {
     // the stale window) matches zero rows instead of overwriting a terminal status.
     private static final String MARK_SQL =
             "UPDATE triaged_alerts SET triage_status = ?, severity = ?, "
-          + "verdict = ?::jsonb, prompt_version = ?, triaged_at = ? "
-          + "WHERE alert_id = ?::uuid AND triage_status = 'PENDING_TRIAGE'";
+                    + "verdict = ?::jsonb, prompt_version = ?, triaged_at = ? "
+                    + "WHERE alert_id = ?::uuid AND triage_status = 'PENDING_TRIAGE'";
 
     @Override
     public void markTriaged(UUID alertId, String triageStatus, String severity,
@@ -75,7 +75,7 @@ public class JdbcTriageInbox implements TriageInbox {
                         verdictJson, promptVersion);
                 if (updated == 0) {
                     log.warn("Mark skipped alertId={} — row already left PENDING_TRIAGE "
-                            + "(stale-pending sweep won the race); verdict not recorded",
+                                    + "(stale-pending sweep won the race); verdict not recorded",
                             alertId);
                 }
                 return null;
@@ -106,51 +106,70 @@ public class JdbcTriageInbox implements TriageInbox {
     @Override
     public int sweepStalePending(Duration staleAfter, int limit, SweepAction action) {
         return onJdbcPool(() -> {
-            String claimSql = "SELECT alert_id, account_id, rule_name FROM triaged_alerts "
-                            + "WHERE triage_status = 'PENDING_TRIAGE' AND created_at < ? "
-                            + "ORDER BY created_at LIMIT ? FOR UPDATE SKIP LOCKED";
             try (Connection conn = dataSource.getConnection()) {
                 conn.setAutoCommit(false);
-                try {
-                    List<PendingRow> claimed = new ArrayList<>();
-                    try (var ps = conn.prepareStatement(claimSql)) {
-                        ps.setQueryTimeout(10);
-                        ps.setTimestamp(1, Timestamp.from(Instant.now().minus(staleAfter)));
-                        ps.setInt(2, limit);
-                        try (var rs = ps.executeQuery()) {
-                            while (rs.next()) {
-                                claimed.add(new PendingRow(
-                                        UUID.fromString(rs.getString("alert_id")),
-                                        rs.getString("account_id"),
-                                        rs.getString("rule_name")));
-                            }
-                        }
-                    }
-                    int swept = 0;
-                    for (PendingRow row : claimed) {
-                        Mark mark = action.process(row);   // publish happens in here
-                        if (mark == null) continue;        // row stays PENDING_TRIAGE
-                        // Claimed rows are locked and PENDING_TRIAGE, so the status
-                        // guard always matches here — counting the update keeps that
-                        // assumption honest instead of asserting it.
-                        swept += executeMark(conn, row.alertId(), mark.triageStatus(),
-                                mark.severity(), mark.verdictJson(), mark.promptVersion());
-                    }
-                    conn.commit();
-                    return swept;
-                } catch (SQLException | RuntimeException e) {
-                    conn.rollback();
-                    throw e instanceof RuntimeException re
-                            ? re
-                            : new IllegalStateException("stale-pending sweep failed", e);
-                }
+                return sweepInTransaction(conn, staleAfter, limit, action);
             } catch (SQLException e) {
                 throw new IllegalStateException("stale-pending sweep failed", e);
             }
         });
     }
 
-    /** @return rows updated: 1, or 0 if the row already left PENDING_TRIAGE. */
+    private int sweepInTransaction(
+            Connection conn,
+            Duration staleAfter,
+            int limit,
+            SweepAction action) throws SQLException {
+
+        String claimSql = "SELECT alert_id, account_id, rule_name FROM triaged_alerts "
+                + "WHERE triage_status = 'PENDING_TRIAGE' AND created_at < ? "
+                + "ORDER BY created_at LIMIT ? FOR UPDATE SKIP LOCKED";
+
+        try {
+            List<PendingRow> claimed = new ArrayList<>();
+
+            try (var ps = conn.prepareStatement(claimSql)) {
+                ps.setQueryTimeout(10);
+                ps.setTimestamp(1, Timestamp.from(Instant.now().minus(staleAfter)));
+                ps.setInt(2, limit);
+
+                try (var rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        claimed.add(new PendingRow(
+                                UUID.fromString(rs.getString("alert_id")),
+                                rs.getString("account_id"),
+                                rs.getString("rule_name")));
+                    }
+                }
+            }
+
+            int swept = 0;
+
+            for (PendingRow row : claimed) {
+                Mark mark = action.process(row);   // publish happens in here
+                if (mark == null) continue;        // row stays PENDING_TRIAGE
+
+                // Claimed rows are locked and PENDING_TRIAGE, so the status
+                // guard always matches here — counting the update keeps that
+                // assumption honest instead of asserting it.
+                swept += executeMark(conn, row.alertId(), mark.triageStatus(),
+                        mark.severity(), mark.verdictJson(), mark.promptVersion());
+            }
+
+            conn.commit();
+            return swept;
+
+        } catch (SQLException | RuntimeException e) {
+            conn.rollback();
+            throw e instanceof RuntimeException re
+                    ? re
+                    : new IllegalStateException("stale-pending sweep failed", e);
+        }
+    }
+
+    /**
+     * @return rows updated: 1, or 0 if the row already left PENDING_TRIAGE.
+     */
     private static int executeMark(Connection conn, UUID alertId, String triageStatus,
                                    String severity, String verdictJson, String promptVersion)
             throws SQLException {

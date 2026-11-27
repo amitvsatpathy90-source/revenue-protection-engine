@@ -1,11 +1,11 @@
 package io.rpe.triage.service;
 
 import io.rpe.triage.TriageTestSupport;
-import io.rpe.triage.config.TriageProperties;
 import io.rpe.triage.domain.TriagedAlertMessage;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashSet;
@@ -16,6 +16,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -24,9 +25,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * insert and verdict publish — are re-emitted as DEGRADED verdicts. The LLM is NEVER
  * re-called for them (the original result is gone; degraded is the correct answer).
  *
+ * <p>
  * That guarantee is structural: {@link PendingTriageSweep} has no TriageAgent
  * dependency at all, so it cannot spend LLM budget. This test pins the behaviour.
  *
+ * <p>
  * The sweep runs on EVERY instance, so the stale-row claim must be instance-exclusive
  * (FOR UPDATE SKIP LOCKED in the JDBC inbox; the in-memory inbox mirrors the atomic
  * claim). The concurrency test pins that contract: two racing sweeps over the same
@@ -36,6 +39,11 @@ class PendingTriageSweepTest {
 
     private final MeterRegistry registry = new SimpleMeterRegistry();
     private final ObjectMapper objectMapper = TriageTestSupport.objectMapper();
+
+    @AfterEach
+    void closeRegistry() {
+        registry.close();
+    }
 
     @Test
     void stalePendingRowsAreReEmittedAsDegradedVerdicts() {
@@ -53,16 +61,17 @@ class PendingTriageSweepTest {
 
         sweep.sweep();
 
-        assertThat(publisher.published).hasSize(2);
         assertThat(publisher.published)
+                .hasSize(2)
                 .allSatisfy(v -> {
                     assertThat(v.triageStatus())
                             .isEqualTo(TriagedAlertMessage.STATUS_DEGRADED_RULE_BASED);
                     assertThat(v.degradedReason()).isEqualTo("stale-pending-sweep");
                 });
         // Rows transitioned out of PENDING_TRIAGE.
-        assertThat(inbox.statusById.get(a1)).isEqualTo(TriagedAlertMessage.STATUS_DEGRADED_RULE_BASED);
-        assertThat(inbox.statusById.get(a2)).isEqualTo(TriagedAlertMessage.STATUS_DEGRADED_RULE_BASED);
+        assertThat(inbox.statusById)
+                .containsEntry(a1, TriagedAlertMessage.STATUS_DEGRADED_RULE_BASED)
+                .containsEntry(a2, TriagedAlertMessage.STATUS_DEGRADED_RULE_BASED);
     }
 
     @Test
@@ -88,7 +97,7 @@ class PendingTriageSweepTest {
                 inbox, new DegradedTriageFallback(props), publisher,
                 objectMapper, registry, props);
 
-        UUID failing   = UUID.randomUUID();
+        UUID failing = UUID.randomUUID();
         UUID surviving = UUID.randomUUID();
         inbox.seedPending(failing, "acct-1", "geo");
         inbox.seedPending(surviving, "acct-2", "velocity");
@@ -98,14 +107,14 @@ class PendingTriageSweepTest {
 
         // Per-row isolation: the failed row stays PENDING_TRIAGE, the rest sweep.
         assertThat(publisher.published).hasSize(1);
-        assertThat(inbox.statusById.get(failing)).isEqualTo("PENDING_TRIAGE");
-        assertThat(inbox.statusById.get(surviving))
-                .isEqualTo(TriagedAlertMessage.STATUS_DEGRADED_RULE_BASED);
+        assertThat(inbox.statusById)
+                .containsEntry(failing, "PENDING_TRIAGE")
+                .containsEntry(surviving, TriagedAlertMessage.STATUS_DEGRADED_RULE_BASED);
 
         // Next cycle picks the failed row back up.
         sweep.sweep();
-        assertThat(inbox.statusById.get(failing))
-                .isEqualTo(TriagedAlertMessage.STATUS_DEGRADED_RULE_BASED);
+        assertThat(inbox.statusById)
+                .containsEntry(failing, TriagedAlertMessage.STATUS_DEGRADED_RULE_BASED);
     }
 
     /**
@@ -136,37 +145,40 @@ class PendingTriageSweepTest {
         // Each instance runs 4 scheduled cycles of batch 5 — 40 claim slots racing
         // for 20 rows. The barrier lines both instances up on every cycle.
         var barrier = new CyclicBarrier(2);
-        ExecutorService pool = Executors.newFixedThreadPool(2);
-        try {
-            Future<?> a = pool.submit(() -> {
-                for (int cycle = 0; cycle < 4; cycle++) {
-                    barrier.await();
-                    sweepA.sweep();
-                }
-                return null;
-            });
-            Future<?> b = pool.submit(() -> {
-                for (int cycle = 0; cycle < 4; cycle++) {
-                    barrier.await();
-                    sweepB.sweep();
-                }
-                return null;
-            });
-            a.get(10, TimeUnit.SECONDS);
-            b.get(10, TimeUnit.SECONDS);
-        } finally {
-            pool.shutdownNow();
+        try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+            try {
+                Future<?> a = pool.submit(() -> {
+                    for (int cycle = 0; cycle < 4; cycle++) {
+                        barrier.await();
+                        sweepA.sweep();
+                    }
+                    return null;
+                });
+                Future<?> b = pool.submit(() -> {
+                    for (int cycle = 0; cycle < 4; cycle++) {
+                        barrier.await();
+                        sweepB.sweep();
+                    }
+                    return null;
+                });
+                a.get(10, TimeUnit.SECONDS);
+                b.get(10, TimeUnit.SECONDS);
+            } finally {
+                pool.shutdownNow();
+            }
         }
 
         // Exactly one verdict per alert_id — the claim is exclusive across instances.
-        assertThat(topic.published).hasSize(20);
         assertThat(topic.published)
+                .hasSize(20)
                 .extracting(TriagedAlertMessage::alertId)
                 .containsExactlyInAnyOrderElementsOf(seeded);
         // And every row left PENDING_TRIAGE exactly once.
-        assertThat(seeded).allSatisfy(id ->
-                assertThat(inbox.statusById.get(id))
-                        .isEqualTo(TriagedAlertMessage.STATUS_DEGRADED_RULE_BASED));
+        assertThat(inbox.statusById)
+                .containsAllEntriesOf(seeded.stream()
+                        .collect(Collectors.toMap(
+                                id -> id,
+                                id -> TriagedAlertMessage.STATUS_DEGRADED_RULE_BASED)));
     }
 
     /**
@@ -190,14 +202,14 @@ class PendingTriageSweepTest {
 
         // Sweep claims the stale row and transitions it to DEGRADED_RULE_BASED.
         sweep.sweep();
-        assertThat(inbox.statusById.get(alertId))
-                .isEqualTo(TriagedAlertMessage.STATUS_DEGRADED_RULE_BASED);
+        assertThat(inbox.statusById)
+                .containsEntry(alertId, TriagedAlertMessage.STATUS_DEGRADED_RULE_BASED);
 
         // The stalled consumer's mark arrives late — guarded UPDATE matches nothing.
         inbox.markTriaged(alertId, TriagedAlertMessage.STATUS_LLM_TRIAGED, "HIGH",
                 "{}", "v1");
 
-        assertThat(inbox.statusById.get(alertId))
-                .isEqualTo(TriagedAlertMessage.STATUS_DEGRADED_RULE_BASED);
+        assertThat(inbox.statusById)
+                .containsEntry(alertId, TriagedAlertMessage.STATUS_DEGRADED_RULE_BASED);
     }
 }

@@ -7,6 +7,7 @@ import io.rpe.triage.config.LlmResilienceConfig;
 import io.rpe.triage.domain.TriagedAlertMessage;
 import io.rpe.triage.rag.TriageVectorRepository.RetrievedChunk;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.jspecify.annotations.NullMarked;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.Message;
@@ -36,6 +37,7 @@ class TriageServiceKeyedLookupTest {
         final AtomicInteger calls = new AtomicInteger();
 
         @Override
+        @NullMarked
         public ChatResponse call(Prompt prompt) {
             calls.incrementAndGet();
             prompts.add(prompt.getInstructions().stream()
@@ -77,7 +79,8 @@ class TriageServiceKeyedLookupTest {
 
     private final List<ExecutorService> executors = new ArrayList<>();
 
-    @AfterEach // Fixture executors must not leak across tests
+    @AfterEach
+        // Fixture executors must not leak across tests
     void closeExecutors() {
         executors.forEach(ExecutorService::close);
     }
@@ -122,7 +125,8 @@ class TriageServiceKeyedLookupTest {
         assertThat(f.publisher().published.getFirst().ragContextUsed()).isTrue();
     }
 
-    @Test // No corpus row ⇒ no rag_context block
+    @Test
+        // No corpus row ⇒ no rag_context block
     void unknownRuleYieldsEmptyContextAndUnaugmentedVerdict() {
         var retrieval = new StubRetrieval(
                 List.of(new RetrievedChunk("velocity", VELOCITY_DOC, 1.0)), null);
@@ -137,7 +141,8 @@ class TriageServiceKeyedLookupTest {
         assertThat(verdict.triageStatus()).isEqualTo(TriagedAlertMessage.STATUS_LLM_TRIAGED);
     }
 
-    @Test // Retrieval failure degrades RAG only, not the verdict
+    @Test
+        // Retrieval failure degrades RAG only, not the verdict
     void retrievalFailureStillProducesUnaugmentedLlmVerdict() {
         var retrieval = new StubRetrieval(List.of(),
                 new TriageAgentException("rag-retrieval-error", new RuntimeException("db down")));

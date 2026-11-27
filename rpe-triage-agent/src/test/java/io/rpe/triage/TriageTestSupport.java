@@ -11,11 +11,13 @@ import io.rpe.triage.domain.PaymentAlert;
 import io.rpe.triage.domain.RagCorpusMode;
 import io.rpe.triage.domain.TriagedAlertMessage;
 import io.rpe.triage.inbox.TriageInbox;
+import io.rpe.triage.service.PublishFailedException;
 import io.rpe.triage.service.TriagedVerdictPublisher;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.jspecify.annotations.NullMarked;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -36,14 +38,15 @@ import java.util.Set;
 
 /**
  * Shared fixtures + hand-rolled stubs for the triage test suite.
- *
+ * <p>
  * No Mockito: Byte Buddy cannot instrument on this JVM (same constraint the core
  * module hit). All collaborators are real or hand-rolled stubs — which also keeps
  * the §7 promise that "all provider interaction is stubbed in mvn verify".
  */
 public final class TriageTestSupport {
 
-    private TriageTestSupport() {}
+    private TriageTestSupport() {
+    }
 
     /**
      * ObjectMapper matching Spring Boot's autoconfigured bean: JavaTimeModule registered
@@ -57,14 +60,18 @@ public final class TriageTestSupport {
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 
-    /** Minimal valid TriageVerdict JSON for a no-tool-call response. */
+    /**
+     * Minimal valid TriageVerdict JSON for a no-tool-call response.
+     */
     public static final String VALID_VERDICT_JSON =
             "{\"severity\":\"LOW\",\"narrative\":\"No prior anomalies; low urgency.\","
-          + "\"evidence\":[],\"confidence\":0.4}";
+                    + "\"evidence\":[],\"confidence\":0.4}";
 
     // ── Property fixtures ────────────────────────────────────────────────────
 
-    /** Wide windows — CB/RL/bulkhead never trip; for replay/agent-path tests. */
+    /**
+     * Wide windows — CB/RL/bulkhead never trip; for replay/agent-path tests.
+     */
     public static TriageProperties lenientProps() {
         return new TriageProperties(
                 new TriageProperties.Llm(
@@ -75,7 +82,9 @@ public final class TriageTestSupport {
                 lenientRag());
     }
 
-    /** Matches application.yml's PLACEHOLDER shape closely enough for CB/timeout math to never trip in tests. */
+    /**
+     * Matches application.yml's PLACEHOLDER shape closely enough for CB/timeout math to never trip in tests.
+     */
     private static TriageProperties.Rag lenientRag() {
         return new TriageProperties.Rag(
                 new TriageProperties.Rag.Embedding(
@@ -85,7 +94,9 @@ public final class TriageTestSupport {
                 RagCorpusMode.PLACEHOLDER);
     }
 
-    /** lenientProps with a small sweep batch — forces multiple claim cycles per sweep in tests. */
+    /**
+     * lenientProps with a small sweep batch — forces multiple claim cycles per sweep in tests.
+     */
     public static TriageProperties sweepBatchProps(int batch) {
         var p = lenientProps();
         return new TriageProperties(
@@ -93,7 +104,9 @@ public final class TriageTestSupport {
                 p.promptVersion(), p.dev(), p.rag());
     }
 
-    /** Tight window (2 calls), 50ms slow threshold — opens the CB fast in tests. */
+    /**
+     * Tight window (2 calls), 50ms slow threshold — opens the CB fast in tests.
+     */
     public static TriageProperties cbProps() {
         return new TriageProperties(
                 new TriageProperties.Llm(
@@ -120,7 +133,9 @@ public final class TriageTestSupport {
         return new ChatResponse(List.of(new Generation(new AssistantMessage(text))));
     }
 
-    /** Real TriageAgent wired around a stub ChatModel and a real R4j boundary. */
+    /**
+     * Real TriageAgent wired around a stub ChatModel and a real R4j boundary.
+     */
     public static TriageAgent agent(ChatModel model, TriageProperties props,
                                     MeterRegistry reg, ExecutorService vt) {
         LlmResilience res = new LlmResilienceConfig().llmResilience(props, reg);
@@ -139,26 +154,41 @@ public final class TriageTestSupport {
     public static final class StubChatModel implements ChatModel {
         public final AtomicInteger calls = new AtomicInteger();
         private final String json;
-        private final long   sleepMs;
+        private final long sleepMs;
         private final RuntimeException error;
 
-        public StubChatModel(String json) { this(json, 0, null); }
-
-        private StubChatModel(String json, long sleepMs, RuntimeException error) {
-            this.json = json; this.sleepMs = sleepMs; this.error = error;
+        public StubChatModel(String json) {
+            this(json, 0, null);
         }
 
-        /** Each call sleeps {@code ms} → exceeds the CB slow-call threshold. */
-        public StubChatModel withSleep(long ms) { return new StubChatModel(json, ms, error); }
+        private StubChatModel(String json, long sleepMs, RuntimeException error) {
+            this.json = json;
+            this.sleepMs = sleepMs;
+            this.error = error;
+        }
 
-        public StubChatModel withError(RuntimeException e) { return new StubChatModel(json, sleepMs, e); }
+        /**
+         * Each call sleeps {@code ms} → exceeds the CB slow-call threshold.
+         */
+        public StubChatModel withSleep(long ms) {
+            return new StubChatModel(json, ms, error);
+        }
+
+        public StubChatModel withError(RuntimeException e) {
+            return new StubChatModel(json, sleepMs, e);
+        }
 
         @Override
+        @NullMarked
+        @SuppressWarnings("java:S2925") // Intentional latency simulation for circuit-breaker tests.
         public ChatResponse call(Prompt prompt) {
             calls.incrementAndGet();
             if (sleepMs > 0) {
-                try { Thread.sleep(sleepMs); }
-                catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                try {
+                    Thread.sleep(sleepMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
             }
             if (error != null) throw error;
             return cannedResponse(json);
@@ -224,7 +254,9 @@ public final class TriageTestSupport {
             return swept;
         }
 
-        /** Test helper: seed a stale PENDING_TRIAGE row directly. */
+        /**
+         * Test helper: seed a stale PENDING_TRIAGE row directly.
+         */
         public void seedPending(UUID alertId, String accountId, String ruleName) {
             inserted.add(alertId);
             statusById.put(alertId, "PENDING_TRIAGE");

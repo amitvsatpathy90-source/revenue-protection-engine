@@ -13,3 +13,4 @@ public class TriageValidationException extends RuntimeException {
                 .formatted(alertIdPresent, accountIdPresent, ruleNamePresent));
     }
 }
+

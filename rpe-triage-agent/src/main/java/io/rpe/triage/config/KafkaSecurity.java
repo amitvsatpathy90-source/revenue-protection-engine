@@ -22,7 +22,8 @@ import java.util.Map;
  */
 public final class KafkaSecurity {
 
-    private KafkaSecurity() {}
+    private KafkaSecurity() {
+    }
 
     public static Map<String, Object> transportProps(
             String protocol, String mechanism,
@@ -37,8 +38,8 @@ public final class KafkaSecurity {
         }
         if (isBlank(username) || isBlank(password)) {
             throw new IllegalStateException(
-                "Kafka security.protocol=" + protocol + " requires KAFKA_SASL_USERNAME/PASSWORD "
-              + "(fail-closed — refusing to connect without credentials)");
+                    "Kafka security.protocol=" + protocol + " requires KAFKA_SASL_USERNAME/PASSWORD "
+                            + "(fail-closed — refusing to connect without credentials)");
         }
         props.put(SaslConfigs.SASL_MECHANISM, mechanism);
         props.put(SaslConfigs.SASL_JAAS_CONFIG, String.format(

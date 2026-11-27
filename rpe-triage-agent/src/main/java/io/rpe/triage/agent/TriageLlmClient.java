@@ -18,39 +18,42 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.beans.factory.annotation.Qualifier;
-import io.rpe.triage.config.BoundaryHandler;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import io.rpe.triage.config.BoundaryHandler;
+
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
 /**
- * Every provider round-trip goes through this decorator chain -- the LLM is the
+ * Every provider round-trip goes through this decorator chain. The LLM is the
  * system's least reliable, most expensive outbound dependency (ADR-15).
  *
- * <p>Decorator order, innermost &rarr; outermost (the triage agent design discipline -- BINDING):
+ * <p>Decorator order, innermost to outermost (binding design discipline):
+ *
  * <pre>
- *   LLM call -&gt; Retry -&gt; TimeLimiter -&gt; Bulkhead -&gt; RateLimiter -&gt; CircuitBreaker
+ * LLM call -> Retry -> TimeLimiter -> Bulkhead -> RateLimiter -> CircuitBreaker
  * </pre>
  *
- * <p>Retry sits INSIDE the TimeLimiter so retries share one 12s budget -- each retry
- * must not consume a fresh budget unobserved, and the CB (outermost) must see the
- * true wall-clock of the retried unit for slow-call-rate detection.
+ * <p>Retry sits inside the TimeLimiter so all attempts share one 12-second
+ * budget. The outermost CircuitBreaker observes the wall-clock duration of the
+ * complete retried operation for slow-call-rate detection.
  */
 @Component
 public class TriageLlmClient {
 
     private static final Logger log = LoggerFactory.getLogger(TriageLlmClient.class);
 
-    private final ChatModel       chatModel;
-    private final LlmResilience   resilience;
+    private final ChatModel chatModel;
+    private final LlmResilience resilience;
     private final ExecutorService llmExecutor;
-    private final MeterRegistry   meterRegistry;
-    private final String          provider;
+    private final MeterRegistry meterRegistry;
+    private final String provider;
 
     public TriageLlmClient(
             ChatModel chatModel,
@@ -58,83 +61,115 @@ public class TriageLlmClient {
             @Qualifier("llmExecutor") ExecutorService llmExecutor,
             MeterRegistry meterRegistry,
             @Value("${triage.llm.provider-tag:openai}") String provider) {
-        this.chatModel     = chatModel;
-        this.resilience    = resilience;
-        this.llmExecutor   = llmExecutor;
+        this.chatModel = chatModel;
+        this.resilience = resilience;
+        this.llmExecutor = llmExecutor;
         this.meterRegistry = meterRegistry;
-        this.provider      = provider;
+        this.provider = provider;
     }
 
     /**
      * Returns a tool-calling options builder seeded from the model's default options.
-     * <p>
-     * Keeps the provider-specific options type; {@code OpenAiChatModel} casts prompt
-     * options to {@code OpenAiChatOptions}, so a generic builder fails with
-     * {@code ClassCastException}.
      *
-     * @return builder derived from the model defaults, or a generic builder if the
-     *         defaults are not {@link ToolCallingChatOptions}
+     * <p>Keeps the provider-specific options type. {@code OpenAiChatModel} casts
+     * prompt options to {@code OpenAiChatOptions}, so a generic builder can cause
+     * a {@code ClassCastException}.
+     *
+     * @return a builder derived from model defaults, or a generic builder when
+     * the defaults do not implement {@link ToolCallingChatOptions}
      */
     ToolCallingChatOptions.Builder<?> newToolCallingOptionsBuilder() {
-        // pattern match avoids a separate cast and null-safe instanceof check
-        return chatModel.getOptions() instanceof ToolCallingChatOptions o
-                ? o.mutate()                         // keeps provider options type and defaults
-                : ToolCallingChatOptions.builder();  // fallback for models without tool-calling options
-
+        return chatModel.getOptions() instanceof ToolCallingChatOptions options
+                ? options.mutate()
+                : ToolCallingChatOptions.builder();
     }
 
     /**
-     * One guarded provider call. Maps every terminal failure to a
-     * {@link TriageAgentException} with a bounded reason — callers route to the
-     * degraded verdict; nothing here is retried beyond the inner Retry's
-     * transport/429/5xx policy.
+     * Executes one guarded provider call.
+     *
+     * <p>Maps terminal failures to {@link TriageAgentException} with a bounded
+     * reason so callers can route to the degraded verdict. Retries are limited
+     * to the transport/429/5xx policy configured by the inner Retry decorator.
      */
-    @BoundaryHandler("r4j-decorator-boundary: Callable.call() declares checked Exception; all terminal failures map to TriageAgentException for the degraded fallback")
+    @BoundaryHandler(
+            "r4j-decorator-boundary: Callable.call() declares checked Exception; "
+                    + "terminal failures map to TriageAgentException for degraded fallback")
     public ChatResponse call(Prompt prompt) {
-        Supplier<ChatResponse> retried =
-                Retry.decorateSupplier(resilience.retry(), () -> chatModel.call(prompt));
 
-        // ExecutorService.submit (not CompletableFuture.supplyAsync):
-        // The TimeLimiter cancels this Future with interrupt=true on timeout, and a FutureTask
-        // from submit() actually interrupts its worker -- a CompletableFuture from supplyAsync
-        // never does (its cancel cannot interrupt the running task), so the abandoned call would
-        // keep blocking.
-        //
-        // Best-effort against OkHttp (the hard bound is spring.ai.openai.chat.timeout=15s);
-        // together they cap the leak.
-        Callable<ChatResponse> timeLimited = TimeLimiter.decorateFutureSupplier(
-                resilience.timeLimiter(),
-                () -> llmExecutor.submit(retried::get));
+        Supplier<ChatResponse> retried =
+                Retry.decorateSupplier(
+                        resilience.retry(),
+                        () -> chatModel.call(prompt));
+
+        // Retain the FutureTask so caller interruption can explicitly cancel it.
+        FutureTask<ChatResponse> providerCall = new FutureTask<>(retried::get);
+
+        /*
+         * Use ExecutorService execution rather than CompletableFuture.supplyAsync.
+         * FutureTask cancellation requests interruption of its worker; cancellation
+         * of a CompletableFuture created by supplyAsync does not interrupt its
+         * running task.
+         *
+         * Interruption is best-effort for the underlying HTTP request. The configured
+         * 15-second OpenAI HTTP timeout provides the transport-level backstop.
+         */
+        Callable<ChatResponse> timeLimited =
+                TimeLimiter.decorateFutureSupplier(
+                        resilience.timeLimiter(),
+                        () -> {
+                            llmExecutor.execute(providerCall);
+                            return providerCall;
+                        });
 
         Callable<ChatResponse> guarded =
-                CircuitBreaker.decorateCallable(resilience.circuitBreaker(),
-                        RateLimiter.decorateCallable(resilience.rateLimiter(),
-                                Bulkhead.decorateCallable(resilience.bulkhead(), timeLimited)));
+                CircuitBreaker.decorateCallable(
+                        resilience.circuitBreaker(),
+                        RateLimiter.decorateCallable(
+                                resilience.rateLimiter(),
+                                Bulkhead.decorateCallable(
+                                        resilience.bulkhead(),
+                                        timeLimited)));
 
         long start = System.nanoTime();
         String outcome = "success";
+
         try {
             ChatResponse response = guarded.call();
             logUsage(response);
             return response;
+
         } catch (CallNotPermittedException e) {
             outcome = "circuit_open";
             throw new TriageAgentException("circuit-open", e);
+
         } catch (RequestNotPermitted e) {
             outcome = "rate_limited";
             throw new TriageAgentException("rate-limited", e);
+
         } catch (BulkheadFullException e) {
             outcome = "bulkhead_full";
             throw new TriageAgentException("bulkhead-full", e);
+
         } catch (TimeoutException e) {
             outcome = "timeout";
             throw new TriageAgentException("timeout", e);
+
+        } catch (InterruptedException e) {
+            providerCall.cancel(true);
+            Thread.currentThread().interrupt();
+
+            outcome = "error";
+            throw new TriageAgentException("llm-error", e);
+
         } catch (Exception e) {
             outcome = "error";
             throw new TriageAgentException("llm-error", e);
+
         } finally {
-            // Locked signal: triage_llm_latency_seconds{provider, outcome}
-            latencyTimer(outcome).record(System.nanoTime() - start, TimeUnit.NANOSECONDS);
+            // Records the LLM latency signal, categorized by provider and outcome.
+            latencyTimer(outcome).record(
+                    System.nanoTime() - start,
+                    TimeUnit.NANOSECONDS);
         }
     }
 
@@ -146,13 +181,13 @@ public class TriageLlmClient {
                 .register(meterRegistry);
     }
 
-    /** Token counts only — never prompt or completion bodies (rules §6). */
+    /**
+     * Logs token counts only. Prompt and completion bodies must never be logged
+     * (security rules §6).
+     */
     private void logUsage(ChatResponse response) {
-        if (response.getMetadata() == null) return;
         Usage usage = response.getMetadata().getUsage();
-        if (usage != null) {
-            log.debug("LLM usage promptTokens={} completionTokens={}",
-                    usage.getPromptTokens(), usage.getCompletionTokens());
-        }
+        log.debug("LLM usage promptTokens={} completionTokens={}",
+                usage.getPromptTokens(), usage.getCompletionTokens());
     }
 }

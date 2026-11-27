@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Pins the admin-client transport-security fold (ADR-20). Per-service copy
  * of the detection-service test (no shared jar).
- *
+ * <p>
  * The shared {@code triageAdminClient} bean feeds both observability pollers
  * ({@code DltDepthMetrics}, {@code TriageLagMetrics}). Without the securityProps fold it
  * connects credential-less under SASL_SSL: every depth/lag poll fails inside the
@@ -33,14 +33,13 @@ class KafkaAdminSecurityPropsTest {
         Map<String, Object> props = config.adminProps(kafkaAdmin);
 
         assertThat(props)
-                .as("autoconfigured admin props (bootstrap etc.) must be preserved")
-                .containsEntry(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, "broker:9092");
-        assertThat(props)
-                .as("the admin client must authenticate exactly like every other factory "
-                        + "(ADR-20) — credential-less = every depth/lag gauge frozen")
+                .as("admin props must preserve bootstrap configuration and carry SASL "
+                        + "authentication (ADR-20); otherwise depth/lag gauges freeze")
+                .containsEntry(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, "broker:9092")
                 .containsEntry(CommonClientConfigs.SECURITY_PROTOCOL_CONFIG, "SASL_SSL")
                 .containsEntry(SaslConfigs.SASL_MECHANISM, "SCRAM-SHA-512")
                 .containsKey(SaslConfigs.SASL_JAAS_CONFIG);
+
         assertThat(String.valueOf(props.get(SaslConfigs.SASL_JAAS_CONFIG)))
                 .contains("username=\"rpe-triage\"");
     }

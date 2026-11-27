@@ -14,11 +14,11 @@ import org.springframework.stereotype.Component;
 /**
  * Re-emits DEGRADED verdicts for rows stuck in PENDING_TRIAGE — the crash window
  * between inbox insert and verdict publish (the triage agent design discipline).
- *
+ * <p>
  * NEVER re-calls the LLM for swept rows: the inbox row already exists, the original
  * LLM result is gone, and degraded is the correct answer. Re-calling would turn
  * every crash into duplicate spend.
- *
+ * <p>
  * The sweep runs on EVERY triage instance, so the stale-row claim must be
  * instance-exclusive: {@link TriageInbox#sweepStalePending} claims rows with
  * {@code FOR UPDATE SKIP LOCKED} and marks them in the same transaction. A plain
@@ -31,12 +31,12 @@ public class PendingTriageSweep {
 
     private static final Logger log = LoggerFactory.getLogger(PendingTriageSweep.class);
 
-    private final TriageInbox             inbox;
-    private final DegradedTriageFallback  fallback;
+    private final TriageInbox inbox;
+    private final DegradedTriageFallback fallback;
     private final TriagedVerdictPublisher publisher;
-    private final ObjectMapper            objectMapper;
-    private final MeterRegistry           meterRegistry;
-    private final TriageProperties        props;
+    private final ObjectMapper objectMapper;
+    private final MeterRegistry meterRegistry;
+    private final TriageProperties props;
 
     public PendingTriageSweep(
             TriageInbox inbox,
@@ -45,12 +45,12 @@ public class PendingTriageSweep {
             ObjectMapper objectMapper,
             MeterRegistry meterRegistry,
             TriageProperties props) {
-        this.inbox         = inbox;
-        this.fallback      = fallback;
-        this.publisher     = publisher;
-        this.objectMapper  = objectMapper;
+        this.inbox = inbox;
+        this.fallback = fallback;
+        this.publisher = publisher;
+        this.objectMapper = objectMapper;
         this.meterRegistry = meterRegistry;
-        this.props         = props;
+        this.props = props;
     }
 
     @Scheduled(fixedDelay = 60_000, initialDelay = 30_000)

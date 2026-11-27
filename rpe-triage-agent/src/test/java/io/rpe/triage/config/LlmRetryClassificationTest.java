@@ -31,7 +31,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class LlmRetryClassificationTest {
 
-    /** The SDK's service-exception builders require headers; an empty set is fine for classification. */
+    /**
+     * The SDK's service-exception builders require headers; an empty set is fine for classification.
+     */
     private static final Headers EMPTY_HEADERS = Headers.builder().build();
 
     private final MeterRegistry registry = new SimpleMeterRegistry();
@@ -93,7 +95,9 @@ class LlmRetryClassificationTest {
                 .isEqualTo(1);
     }
 
-    /** Real {@link LlmResilienceConfig} wiring, retry cap overridden, tiny backoff to stay fast. */
+    /**
+     * Real {@link LlmResilienceConfig} wiring, retry cap overridden, tiny backoff to stay fast.
+     */
     private LlmResilience resilienceWithAttempts(int attempts) {
         TriageProperties props = new TriageProperties(
                 new TriageProperties.Llm(

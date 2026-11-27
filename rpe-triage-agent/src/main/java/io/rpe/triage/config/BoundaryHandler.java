@@ -20,6 +20,8 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 @Target({ElementType.METHOD, ElementType.CONSTRUCTOR, ElementType.TYPE})
 public @interface BoundaryHandler {
-    /** Why broad catch is the correct last resort, e.g. "tool-boundary-bounded-error". */
+    /**
+     * Why broad catch is the correct last resort, e.g. "tool-boundary-bounded-error".
+     */
     String value();
 }

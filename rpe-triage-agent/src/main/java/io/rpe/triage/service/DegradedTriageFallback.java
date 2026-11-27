@@ -14,11 +14,11 @@ import java.util.UUID;
 /**
  * Rule-based degraded verdict — the path that must work with the LLM permanently
  * absent (ADR-15 §3.7).
- *
+ * <p>
  * HARD CONSTRAINT (the triage agent design discipline): this class has ZERO Spring AI imports.
  * It must compile and run with the Spring AI dependency deleted from the pom.
  * Do not add Spring AI types here — route LLM-shaped logic to TriageAgent instead.
- *
+ * <p>
  * ADR-30: ragContextUsed is threaded through so a degraded verdict correctly
  * reports whether RAG context was fetched before the LLM call failed. Every
  * pre-existing overload defaults this to false — those callers never attempted
@@ -27,35 +27,47 @@ import java.util.UUID;
 @Component
 public class DegradedTriageFallback {
 
-    /** ADR-30 — exposes configured RAG corpus mode to the fallback path. */
+    /**
+     * ADR-30 — exposes configured RAG corpus mode to the fallback path.
+     */
     private final TriageProperties props;
 
-    /** Use the same configured corpus mode as the normal triage path. */
+    /**
+     * Use the same configured corpus mode as the normal triage path.
+     */
     public DegradedTriageFallback(TriageProperties props) {
         this.props = props;
     }
 
-    /** Static rule → severity map. Calibration is unvalidated (synthetic data) — see Architecture Spec limitations. */
+    /**
+     * Static rule → severity map. Calibration is unvalidated (synthetic data) — see Architecture Spec limitations.
+     */
     private static final Map<String, Severity> SEVERITY_BY_RULE = Map.of(
-            "geo",      Severity.HIGH,    // impossible travel = strongest single signal
+            "geo", Severity.HIGH,    // impossible travel = strongest single signal
             "velocity", Severity.MEDIUM,
-            "zscore",   Severity.MEDIUM);
+            "zscore", Severity.MEDIUM);
 
     private static final Severity DEFAULT_SEVERITY = Severity.MEDIUM;
 
-    /** Pre-ADR-30 call shape — UNCHANGED signature. */
+    /**
+     * Pre-ADR-30 call shape — UNCHANGED signature.
+     */
     public TriagedAlertMessage degraded(PaymentAlert alert, String degradedReason, String promptVersion) {
         return degraded(alert, degradedReason, promptVersion, false);
     }
 
-    /** ADR-30: RAG-aware degraded path — caller reports whether context was actually retrieved. */
+    /**
+     * ADR-30: RAG-aware degraded path — caller reports whether context was actually retrieved.
+     */
     public TriagedAlertMessage degraded(PaymentAlert alert, String degradedReason, String promptVersion,
-                                         boolean ragContextUsed) {
+                                        boolean ragContextUsed) {
         return build(alert.alertId(), alert.eventId(), alert.accountId(), alert.ruleName(),
                 degradedReason, promptVersion, ragContextUsed);
     }
 
-    /** Sweep path — only inbox columns are available for stale PENDING_TRIAGE rows; never RAG-aware. */
+    /**
+     * Sweep path — only inbox columns are available for stale PENDING_TRIAGE rows; never RAG-aware.
+     */
     public TriagedAlertMessage degraded(UUID alertId, String accountId, String ruleName,
                                         String degradedReason, String promptVersion) {
         return build(alertId, null, accountId, ruleName, degradedReason, promptVersion, false);

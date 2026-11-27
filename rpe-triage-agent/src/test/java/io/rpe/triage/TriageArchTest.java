@@ -100,10 +100,13 @@ class TriageArchTest {
                 for (JavaCodeUnit codeUnit : clazz.getCodeUnits()) {
                     boolean marked = classMarked || codeUnit.isAnnotatedWith(BoundaryHandler.class);
                     for (TryCatchBlock block : codeUnit.getTryCatchBlocks()) {
-                        // Only java.lang.Exception — NOT Throwable: try-with-resources desugars to
-                        // a synthetic catch(Throwable) for resource cleanup, which is not a real
-                        // broad catch. The codebase has zero hand-written Throwable catches
-                        // (the error-boundary discipline).
+
+                        // Only java.lang.Exception — NOT Throwable.
+                        //
+                        // Try-with-resources desugars to a synthetic catch for
+                        // resource cleanup, which is not a real broad catch.
+                        //
+                        // The codebase has zero hand-written Throwable catches
                         boolean broad = block.getCaughtThrowables().stream()
                                 .map(JavaClass::getName)
                                 .anyMatch(n -> n.equals("java.lang.Exception"));

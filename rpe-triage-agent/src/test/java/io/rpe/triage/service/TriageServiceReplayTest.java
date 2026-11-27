@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * §7 replay test — the ordering invariant "that costs money when wrong" (rules §2).
- *
+ * <p>
  * Redelivery of the same alert_id must NOT trigger a second LLM invocation: the inbox
  * INSERT ON CONFLICT runs before the agent loop, so a duplicate short-circuits. The
  * LLM-call counter on the stub model is the ground truth.
@@ -31,7 +31,9 @@ class TriageServiceReplayTest {
     private final ObjectMapper objectMapper = TriageTestSupport.objectMapper();
 
     @AfterEach
-    void tearDown() { vt.close(); }
+    void tearDown() {
+        vt.close();
+    }
 
     private TriageService service(TriageTestSupport.StubChatModel model,
                                   TriageTestSupport.InMemoryInbox inbox,

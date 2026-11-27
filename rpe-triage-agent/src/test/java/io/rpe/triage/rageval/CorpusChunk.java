@@ -11,4 +11,5 @@ record CorpusChunk(
         String ruleName,
         String clusterId,
         String content,
-        int relevanceGrade) {}
+        int relevanceGrade) {
+}

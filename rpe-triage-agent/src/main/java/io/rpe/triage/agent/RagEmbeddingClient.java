@@ -46,26 +46,29 @@ public class RagEmbeddingClient {
 
     private static final Logger log = LoggerFactory.getLogger(RagEmbeddingClient.class);
 
-    private final EmbeddingModel      embeddingModel;
+    private final EmbeddingModel embeddingModel;
     private final EmbeddingResilience resilience;
-    private final ExecutorService     ragExecutor;
-    private final MeterRegistry       meterRegistry;
-    private final String              provider;
+    private final ExecutorService ragExecutor;
+    private final MeterRegistry meterRegistry;
+    private final String provider;
 
     public RagEmbeddingClient(
             EmbeddingModel embeddingModel,
             EmbeddingResilience resilience,
-            @Qualifier("ragExecutor") ExecutorService ragExecutor,   // separate from llmExecutor for incident attribution
+            @Qualifier("ragExecutor") ExecutorService ragExecutor,
+            // separate from llmExecutor for incident attribution
             MeterRegistry meterRegistry,
             @Value("${triage.rag.embedding.provider-tag:openai}") String provider) {
         this.embeddingModel = embeddingModel;
-        this.resilience     = resilience;
-        this.ragExecutor    = ragExecutor;
-        this.meterRegistry  = meterRegistry;
-        this.provider       = provider;
+        this.resilience = resilience;
+        this.ragExecutor = ragExecutor;
+        this.meterRegistry = meterRegistry;
+        this.provider = provider;
     }
 
-    /** @return query embedding vector; terminal failures map to TriageAgentException (caller skips RAG) */
+    /**
+     * @return query embedding vector; terminal failures map to TriageAgentException (caller skips RAG)
+     */
     @BoundaryHandler("r4j-decorator-boundary: all terminal failures map to TriageAgentException so callers can skip RAG and proceed unaugmented")
     public float[] embed(String text) {
         Supplier<EmbeddingResponse> retried = Retry.decorateSupplier(
@@ -115,7 +118,7 @@ public class RagEmbeddingClient {
      * EmbeddingResponse classes this session.
      */
     private float[] extractVector(EmbeddingResponse response) {
-        return response.getResults().get(0).getOutput();
+        return response.getResults().getFirst().getOutput();
     }
 
     private Timer latencyTimer(String outcome) {
@@ -126,12 +129,11 @@ public class RagEmbeddingClient {
                 .register(meterRegistry);
     }
 
-    /** Token counts only — never the embedded text itself (architecture design: same policy as the chat LLM boundary). */
+    /**
+     * Token counts only — never the embedded text itself (architecture design: same policy as the chat LLM boundary).
+     */
     private void logUsage(EmbeddingResponse response) {
-        if (response.getMetadata() == null) return;
         var usage = response.getMetadata().getUsage();
-        if (usage != null) {
-            log.debug("RAG embedding usage promptTokens={}", usage.getPromptTokens());
-        }
+        log.debug("RAG embedding usage promptTokens={}", usage.getPromptTokens());
     }
 }

@@ -9,13 +9,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Guards the ADR-18 single-writer invariant for the triage agent's input-side DLT.
- *
+ * <p>
  * The triage suite is container-free by design (no Mockito/Byte Buddy, no Testcontainers — see
  * TriageTestSupport), so this asserts the {@code DeadLetterPublishingRecoverer} destination
  * resolver directly instead of standing up a broker. That is sufficient: the resolver is the only
  * thing that decides the DLT topic, and the historical bug was a wrong resolver
  * ({@code record.topic() + ".DLT"} → payment.alerts.DLT, the alert-service's sole-writer topic).
- *
+ * <p>
  * Mandated by ai-triage-rules §7 ("assert exactly one record on payment.alerts.triage.DLT; assert
  * zero records on payment.alerts.DLT").
  */

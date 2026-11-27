@@ -12,6 +12,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * §7 contract test — TriageVerdict schema validation.
  *
+ * <p>
  * The structured-output schema is a prompt-injection defense (ADR-15 §8): a verdict
  * the model cannot bind, or that is missing required fields, must be REJECTED so it
  * routes to a degraded verdict rather than emitting garbage. Validation messages
@@ -25,16 +26,18 @@ class TriageVerdictContractTest {
     void validVerdictPassesValidation() {
         var verdict = new TriageVerdict(
                 Severity.HIGH, "Impossible travel between two locations.", List.of(), 0.85);
+
         assertThatCode(verdict::validated).doesNotThrowAnyException();
     }
 
     @Test
-    void unknownSeverityValueIsRejectedByBinding() throws Exception {
+    void unknownSeverityValueIsRejectedByBinding() {
         // The model emitting a severity outside the enum must fail to bind — not
         // silently coerce. @JsonIgnoreProperties ignores unknown PROPERTIES, but an
         // unknown enum VALUE is still a hard binding error.
         String json = "{\"severity\":\"SUPER_CRITICAL\",\"narrative\":\"x\","
-                    + "\"evidence\":[],\"confidence\":0.5}";
+                + "\"evidence\":[],\"confidence\":0.5}";
+
         assertThatThrownBy(() -> objectMapper.readValue(json, TriageVerdict.class))
                 .isInstanceOf(JacksonException.class);
     }
@@ -44,21 +47,26 @@ class TriageVerdictContractTest {
         // Additive schema evolution (ADR-11): an extra field from a newer producer
         // must not break an older consumer.
         String json = "{\"severity\":\"LOW\",\"narrative\":\"x\",\"evidence\":[],"
-                    + "\"confidence\":0.5,\"futureField\":\"ignored\"}";
+                + "\"confidence\":0.5,\"futureField\":\"ignored\"}";
+
         assertThatCode(() -> objectMapper.readValue(json, TriageVerdict.class))
                 .doesNotThrowAnyException();
     }
 
     @Test
     void missingSeverityIsRejected() {
-        assertThatThrownBy(() -> new TriageVerdict(null, "x", List.of(), 0.5).validated())
+        var verdict = new TriageVerdict(null, "x", List.of(), 0.5);
+
+        assertThatThrownBy(verdict::validated)
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("severity");
     }
 
     @Test
     void blankNarrativeIsRejected() {
-        assertThatThrownBy(() -> new TriageVerdict(Severity.LOW, "  ", List.of(), 0.5).validated())
+        var verdict = new TriageVerdict(Severity.LOW, "  ", List.of(), 0.5);
+
+        assertThatThrownBy(verdict::validated)
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("narrative");
     }
@@ -67,28 +75,38 @@ class TriageVerdictContractTest {
     void nullEvidenceArrayIsRejected() {
         // Empty is fine; ABSENT is a contract violation — the difference matters for
         // the evidence-grounding validator downstream.
-        assertThatThrownBy(() -> new TriageVerdict(Severity.LOW, "x", null, 0.5).validated())
+        var verdict = new TriageVerdict(Severity.LOW, "x", null, 0.5);
+
+        assertThatThrownBy(verdict::validated)
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("evidence");
     }
 
     @Test
     void confidenceOutOfRangeIsRejected() {
-        assertThatThrownBy(() -> new TriageVerdict(Severity.LOW, "x", List.of(), 1.5).validated())
+        var aboveRange = new TriageVerdict(Severity.LOW, "x", List.of(), 1.5);
+        var belowRange = new TriageVerdict(Severity.LOW, "x", List.of(), -0.1);
+        var notANumber = new TriageVerdict(Severity.LOW, "x", List.of(), Double.NaN);
+
+        assertThatThrownBy(aboveRange::validated)
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("confidence");
-        assertThatThrownBy(() -> new TriageVerdict(Severity.LOW, "x", List.of(), -0.1).validated())
+
+        assertThatThrownBy(belowRange::validated)
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("confidence");
-        assertThatThrownBy(() -> new TriageVerdict(Severity.LOW, "x", List.of(), Double.NaN).validated())
+
+        assertThatThrownBy(notANumber::validated)
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("confidence");
     }
 
     @Test
     void evidenceItemWithBlankToolCallIdIsRejected() {
-        var verdict = new TriageVerdict(Severity.LOW, "x",
+        var verdict = new TriageVerdict(
+                Severity.LOW, "x",
                 List.of(new TriageVerdict.Evidence("  ", "some finding")), 0.5);
+
         assertThatThrownBy(verdict::validated)
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("toolCallId");
@@ -99,7 +117,9 @@ class TriageVerdictContractTest {
         // PII rule: messages describe shape, not content. A narrative carrying
         // untrusted text must not surface in getMessage().
         String secret = "card-4111111111111111";
-        assertThatThrownBy(() -> new TriageVerdict(null, secret, List.of(), 0.5).validated())
+        var verdict = new TriageVerdict(null, secret, List.of(), 0.5);
+
+        assertThatThrownBy(verdict::validated)
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageNotContaining(secret);
     }

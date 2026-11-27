@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * {@code triage_consumer_lag{group}} — locked signal (ADR-15 §5.3).
- *
+ * <p>
  * Lag rising while the CB is open/slow is the §6.1 detection pair: provider
  * degradation shows here before it shows as errors. Total lag across all
  * {@code payment.alerts} partitions for the triage group; 30s refresh, bounded waits.
@@ -37,8 +37,8 @@ public class TriageLagMetrics {
 
     private static final Logger log = LoggerFactory.getLogger(TriageLagMetrics.class);
 
-    private static final String SOURCE_TOPIC      = "payment.alerts";
-    private static final long   ADMIN_TIMEOUT_SEC = 5;
+    private static final String SOURCE_TOPIC = "payment.alerts";
+    private static final long ADMIN_TIMEOUT_SEC = 5;
 
     private final Admin admin;
     private final AtomicLong lag = new AtomicLong(0);

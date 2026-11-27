@@ -21,7 +21,8 @@ import io.github.resilience4j.timelimiter.TimeLimiter;
  */
 public record EmbeddingResilience(
         CircuitBreaker circuitBreaker,
-        Retry          retry,
-        TimeLimiter    timeLimiter,
-        Bulkhead       bulkhead,
-        RateLimiter    rateLimiter) {}
+        Retry retry,
+        TimeLimiter timeLimiter,
+        Bulkhead bulkhead,
+        RateLimiter rateLimiter) {
+}

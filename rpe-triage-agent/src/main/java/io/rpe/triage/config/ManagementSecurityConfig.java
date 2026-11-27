@@ -36,21 +36,21 @@ import java.time.Duration;
 public class ManagementSecurityConfig {
 
     @Bean
-    SecurityFilterChain actuatorSecurity(HttpSecurity http) throws Exception {
+    SecurityFilterChain actuatorSecurity(HttpSecurity http) {
         return http
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers(HttpMethod.GET,
-                        "/actuator/health/liveness", "/actuator/health/readiness").permitAll()
-                .requestMatchers(HttpMethod.GET, "/actuator/prometheus")
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(HttpMethod.GET,
+                                "/actuator/health/liveness", "/actuator/health/readiness").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/actuator/prometheus")
                         .hasAuthority("SCOPE_metrics:scrape")
-                .requestMatchers("/actuator/**").authenticated()
-                .anyRequest().denyAll())
-            .oauth2ResourceServer(o -> o.jwt(Customizer.withDefaults()))
-            .csrf(AbstractHttpConfigurer::disable)
-            .httpBasic(AbstractHttpConfigurer::disable)
-            .formLogin(AbstractHttpConfigurer::disable)
-            .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .build();
+                        .requestMatchers("/actuator/**").authenticated()
+                        .anyRequest().denyAll())
+                .oauth2ResourceServer(o -> o.jwt(Customizer.withDefaults()))
+                .csrf(AbstractHttpConfigurer::disable)
+                .httpBasic(AbstractHttpConfigurer::disable)
+                .formLogin(AbstractHttpConfigurer::disable)
+                .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .build();
     }
 
     @Bean
@@ -68,7 +68,7 @@ public class ManagementSecurityConfig {
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSetUri(jwkSetUri)
                 .restOperations(new RestTemplate(rf))
                 .build();
-        OAuth2TokenValidator<Jwt> withIssuer   = JwtValidators.createDefaultWithIssuer(issuer);
+        OAuth2TokenValidator<Jwt> withIssuer = JwtValidators.createDefaultWithIssuer(issuer);
         OAuth2TokenValidator<Jwt> withAudience = new AudienceValidator(audience);
         decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(withIssuer, withAudience));
         return decoder;

@@ -9,28 +9,28 @@ import java.util.List;
  * Bound via Spring AI structured output; any parse or validation failure routes
  * to the degraded verdict and is NEVER retried (same input ⇒ same garbage,
  * doubled cost — the triage agent design discipline).
- *
+ * <p>
  * Every {@code evidence} item must reference a tool-call ID from THIS run;
  * {@code EvidenceValidator} drops unmatched items (prompt-injection containment).
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record TriageVerdict(
-        Severity       severity,
-        String         narrative,
+        Severity severity,
+        String narrative,
         List<Evidence> evidence,
-        double         confidence
-) {
+        double confidence) {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record Evidence(String toolCallId, String finding) {}
+    public record Evidence(String toolCallId, String finding) {
+    }
 
     /**
      * Post-binding schema validation. Jackson leaves missing fields null — a verdict
      * with nulls is a contract violation, not a usable answer.
      *
      * @throws IllegalArgumentException on any violation; message describes the
-     *         violation shape only (field names), never field VALUES — narrative
-     *         text may quote untrusted event data.
+     *                                  violation shape only (field names), never field VALUES — narrative
+     *                                  text may quote untrusted event data.
      */
     public TriageVerdict validated() {
         if (severity == null) {

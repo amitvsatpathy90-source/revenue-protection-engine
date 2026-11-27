@@ -79,12 +79,12 @@ public class JdbcTriageVectorRepository implements TriageVectorRepository {
         // Served by idx_triage_rag_corpus_rule_name (V2)
         // ORDER BY id: deterministic if a duplicate rule_name row exists
         String sql = """
-            SELECT rule_name, content
-            FROM triage_rag_corpus
-            WHERE rule_name = ?
-            ORDER BY id
-            LIMIT ?
-            """;
+                SELECT rule_name, content
+                FROM triage_rag_corpus
+                WHERE rule_name = ?
+                ORDER BY id
+                LIMIT ?
+                """;
         return jdbcTemplate.query(con -> {
                     PreparedStatement ps = con.prepareStatement(sql);
                     ps.setQueryTimeout(3);   // above the 2s TimeLimiter; frees the connection

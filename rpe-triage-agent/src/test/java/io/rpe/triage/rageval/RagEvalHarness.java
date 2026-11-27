@@ -36,7 +36,8 @@ final class RagEvalHarness {
             double redundancy,
             double meanPairwiseCos,
             List<CorpusChunk> selected,
-            List<CorpusChunk> candidatePool) {}
+            List<CorpusChunk> candidatePool) {
+    }
 
     static final int FINAL_K = 5;
 

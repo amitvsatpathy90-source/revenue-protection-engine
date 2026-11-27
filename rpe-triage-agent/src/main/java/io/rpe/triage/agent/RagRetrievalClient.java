@@ -36,18 +36,18 @@ import java.util.function.Supplier;
 public class RagRetrievalClient {
 
     private final TriageVectorRepository repository;
-    private final RetrievalResilience    resilience;
-    private final ExecutorService        jdbcExecutor;   // pgvector query is JDBC — dedicated pool, no VT exemption
-    private final MeterRegistry          meterRegistry;
+    private final RetrievalResilience resilience;
+    private final ExecutorService jdbcExecutor;   // pgvector query is JDBC — dedicated pool, no VT exemption
+    private final MeterRegistry meterRegistry;
 
     public RagRetrievalClient(
             TriageVectorRepository repository,
             RetrievalResilience resilience,
             @Qualifier("jdbcExecutor") ExecutorService jdbcExecutor,
             MeterRegistry meterRegistry) {
-        this.repository    = repository;
-        this.resilience    = resilience;
-        this.jdbcExecutor  = jdbcExecutor;
+        this.repository = repository;
+        this.resilience = resilience;
+        this.jdbcExecutor = jdbcExecutor;
         this.meterRegistry = meterRegistry;
     }
 

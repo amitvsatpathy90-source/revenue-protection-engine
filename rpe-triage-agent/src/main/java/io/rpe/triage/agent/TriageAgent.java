@@ -62,7 +62,7 @@ public class TriageAgent {
     static final String VERDICT_SIGNAL_METRIC = "triage.verdict.signal";   // tag: signal (bounded enum)
 
     private static final Logger log = LoggerFactory.getLogger(TriageAgent.class);
-
+    private final Logger devPromptLog = LoggerFactory.getLogger("triage.prompt.dev");
     /**
      * Static system prompt — compiled into the module, versioned via
      * {@code triage.prompt-version}. NEVER concatenate event data into this string;
@@ -107,7 +107,6 @@ public class TriageAgent {
     private final DistributionSummary roundsHistogram;
     private final MeterRegistry meterRegistry;
     private final int toolRounds;   // effective budget, 1..MAX_TOOL_ROUNDS
-    private final Logger devPromptLog = LoggerFactory.getLogger("triage.prompt.dev");
 
     /**
      * Additive ctor: existing callers and tests keep the full {@link #MAX_TOOL_ROUNDS} budget.

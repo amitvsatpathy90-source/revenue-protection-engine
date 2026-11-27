@@ -23,12 +23,13 @@ CREATE EXTENSION IF NOT EXISTS vector;
 -- re-index, same class of silent config-vs-schema mismatch risk as other
 -- config-coupling points in this system (see ADR-28 for the purge-horizon analog).
 -- No automated guard ties this column width to the config value today.
-CREATE TABLE triage_rag_corpus (
-    id           BIGSERIAL   PRIMARY KEY,
-    rule_name    TEXT        NOT NULL,      -- links a chunk to its detector
-    content      TEXT        NOT NULL,      -- behavioral description only, no thresholds
-    embedding    VECTOR(1536) NOT NULL,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE triage_rag_corpus
+(
+    id         BIGSERIAL PRIMARY KEY,
+    rule_name  TEXT         NOT NULL, -- links a chunk to its detector
+    content    TEXT         NOT NULL, -- behavioral description only, no thresholds
+    embedding  VECTOR(1536) NOT NULL,
+    created_at TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
 -- HNSW over IVFFlat: IVFFlat's list count is tuned for a known row count in advance,
@@ -37,6 +38,6 @@ CREATE TABLE triage_rag_corpus (
 -- against the pinned extension version; confirm before trusting this index creates.
 CREATE INDEX idx_triage_rag_corpus_embedding
     ON triage_rag_corpus
-    USING hnsw (embedding vector_cosine_ops);
+        USING hnsw (embedding vector_cosine_ops);
 
 CREATE INDEX idx_triage_rag_corpus_rule_name ON triage_rag_corpus (rule_name);

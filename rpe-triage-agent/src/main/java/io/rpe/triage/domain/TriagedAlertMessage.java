@@ -8,14 +8,14 @@ import java.util.UUID;
 
 /**
  * Envelope published to {@code payment.alerts.triaged}.
- *
+ * <p>
  * Advisory metadata ONLY — nothing in this message gates detection, alert identity,
  * or delivery (Architecture Spec immutable constraint). {@code schemaVersion} enables additive
  * evolution for downstream consumers (ADR-11 semantics).
- *
+ * <p>
  * {@code triageStatus} values: {@code LLM_TRIAGED} | {@code DEGRADED_RULE_BASED}.
  * ({@code PENDING_TRIAGE} exists only as an inbox row state, never on the topic.)
- *
+ * <p>
  * ADR-30: ragContextUsed is a new trailing component recording whether retrieved
  * corpus context was present at triage time. It is metadata only — it does not
  * gate evidence grounding; TriageVerdict/EvidenceValidator remain tool-call-
@@ -24,22 +24,22 @@ import java.util.UUID;
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record TriagedAlertMessage(
-        UUID     alertId,
-        String   eventId,
-        String   accountId,
-        String   ruleName,
+        UUID alertId,
+        String eventId,
+        String accountId,
+        String ruleName,
         Severity severity,
-        String   narrative,
+        String narrative,
         List<TriageVerdict.Evidence> evidence,
-        double   confidence,
-        String   triageStatus,
-        String   promptVersion,
-        boolean  evidenceStripped,
-        int      toolRounds,
-        String   degradedReason,   // null on the LLM path
-        Instant  triagedAt,
-        String   schemaVersion,
-        boolean  ragContextUsed,   // ADR-30 — true iff RAG context was non-empty at triage time
+        double confidence,
+        String triageStatus,
+        String promptVersion,
+        boolean evidenceStripped,
+        int toolRounds,
+        String degradedReason,   // null on the LLM path
+        Instant triagedAt,
+        String schemaVersion,
+        boolean ragContextUsed,   // ADR-30 — true iff RAG context was non-empty at triage time
         RagCorpusMode corpusMode   // ADR-30 — embedding corpus used for that retrieval: PLACEHOLDER or REAL
 ) {
     /**
@@ -57,7 +57,7 @@ public record TriagedAlertMessage(
                 degradedReason, triagedAt, schemaVersion, false, RagCorpusMode.PLACEHOLDER);
     }
 
-    public static final String STATUS_LLM_TRIAGED        = "LLM_TRIAGED";
+    public static final String STATUS_LLM_TRIAGED = "LLM_TRIAGED";
     public static final String STATUS_DEGRADED_RULE_BASED = "DEGRADED_RULE_BASED";
-    public static final String SCHEMA_VERSION             = "1";
+    public static final String SCHEMA_VERSION = "1";
 }

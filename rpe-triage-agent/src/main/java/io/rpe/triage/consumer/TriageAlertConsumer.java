@@ -33,8 +33,8 @@ public class TriageAlertConsumer {
     }
 
     @KafkaListener(
-            id               = "triage-consumer",
-            topics           = "payment.alerts",
+            id = "triage-consumer",
+            topics = "payment.alerts",
             containerFactory = "triageListenerContainerFactory"
     )
     public void consume(ConsumerRecord<String, PaymentAlert> consumerRecord, Acknowledgment ack) {

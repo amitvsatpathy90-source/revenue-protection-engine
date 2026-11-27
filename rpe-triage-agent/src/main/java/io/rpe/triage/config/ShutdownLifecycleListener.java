@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
 /**
  * Marks the start of a graceful shutdown (ADR-22). Per-service copy — no shared jar
  * (the service-independence discipline), symmetric with {@code Pii} / {@code KafkaSecurity} / {@code BoundaryHandler}.
- *
+ * <p>
  * The triage consumer is a SYNCHRONOUS listener: the Kafka container's stop() awaits the
  * in-flight {@code process()} (≤12s LLM TimeLimiter, ai-triage-rules §5) before terminating, so
  * an in-flight triage finishes rather than being killed mid-call. The grace window
@@ -28,10 +28,10 @@ public class ShutdownLifecycleListener {
     private static final Logger log = LoggerFactory.getLogger(ShutdownLifecycleListener.class);
 
     private final ApplicationEventPublisher events;
-    private final MeterRegistry             meterRegistry;
+    private final MeterRegistry meterRegistry;
 
     public ShutdownLifecycleListener(ApplicationEventPublisher events, MeterRegistry meterRegistry) {
-        this.events        = events;
+        this.events = events;
         this.meterRegistry = meterRegistry;
     }
 

@@ -5,11 +5,11 @@ import java.util.UUID;
 
 /**
  * Inbox-pattern idempotency store over {@code triaged_alerts} (ADR-15 §3.5).
- *
+ * <p>
  * The ordering invariant this interface exists to enforce (the triage agent design discipline):
  * {@link #tryInsert} runs BEFORE the LLM call; a conflict means the alert was already
  * triaged (or is being triaged) — skip, commit offset, spend nothing.
- *
+ * <p>
  * Interface (not just the JDBC class) so the replay test can verify the invariant
  * with an in-memory implementation — Mockito is unusable on this JVM.
  */
@@ -52,15 +52,23 @@ public interface TriageInbox {
      */
     int sweepStalePending(Duration staleAfter, int limit, SweepAction action);
 
-    /** Publish-then-mark callback for one exclusively claimed stale row. */
+    /**
+     * Publish-then-mark callback for one exclusively claimed stale row.
+     */
     @FunctionalInterface
     interface SweepAction {
-        /** @return the mark to record, or {@code null} to leave the row PENDING_TRIAGE. */
+        /**
+         * @return the mark to record, or {@code null} to leave the row PENDING_TRIAGE.
+         */
         Mark process(PendingRow row);
     }
 
-    record PendingRow(UUID alertId, String accountId, String ruleName) {}
+    record PendingRow(UUID alertId, String accountId, String ruleName) {
+    }
 
-    /** Verdict fields recorded when a swept row leaves PENDING_TRIAGE. */
-    record Mark(String triageStatus, String severity, String verdictJson, String promptVersion) {}
+    /**
+     * Verdict fields recorded when a swept row leaves PENDING_TRIAGE.
+     */
+    record Mark(String triageStatus, String severity, String verdictJson, String promptVersion) {
+    }
 }

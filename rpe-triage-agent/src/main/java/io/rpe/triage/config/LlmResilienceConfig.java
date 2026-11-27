@@ -34,7 +34,7 @@ import java.time.Duration;
 /**
  * Builds the LLM Resilience4j boundary from {@code triage.llm.*} (LLM resilience contract).
  * Per-boundary config, no global defaults — same discipline as the core module.
- *
+ * <p>
  * The CB is slow-call-rate based IN ADDITION to error rate: provider degradation
  * shows as latency before errors (ADR-15 §6.1); an error-rate-only CB is blind to it.
  */
@@ -88,12 +88,12 @@ public class LlmResilienceConfig {
                 .timeoutDuration(Duration.ZERO)   // the billing breaker rejects, never queues
                 .build());
 
-        CircuitBreaker cb       = cbRegistry.circuitBreaker(NAME);
-        Retry retry             = retryRegistry.retry(NAME);
-        Bulkhead bulkhead       = bulkheadRegistry.bulkhead(NAME);
+        CircuitBreaker cb = cbRegistry.circuitBreaker(NAME);
+        Retry retry = retryRegistry.retry(NAME);
+        Bulkhead bulkhead = bulkheadRegistry.bulkhead(NAME);
         RateLimiter rateLimiter = rateLimiterRegistry.rateLimiter(NAME);
 
-        // Locked observability signal: resilience4j_circuitbreaker_state{name="llm"}
+        // Registers Resilience4j metrics for the LLM resilience components.
         TaggedCircuitBreakerMetrics.ofCircuitBreakerRegistry(cbRegistry).bindTo(meterRegistry);
         TaggedRetryMetrics.ofRetryRegistry(retryRegistry).bindTo(meterRegistry);
         TaggedBulkheadMetrics.ofBulkheadRegistry(bulkheadRegistry).bindTo(meterRegistry);

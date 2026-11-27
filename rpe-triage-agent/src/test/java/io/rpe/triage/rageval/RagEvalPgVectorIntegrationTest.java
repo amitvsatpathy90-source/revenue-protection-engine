@@ -202,7 +202,7 @@ class RagEvalPgVectorIntegrationTest {
                             embeddings,
                             DEDUP_COSINE_THRESHOLD));
 
-            for (double delta : new double[] {0.02, 0.05, 0.10}) {
+            for (double delta : new double[]{0.02, 0.05, 0.10}) {
                 selectors.put("Floor(" + delta + ")",
                         new RelativeFloorSelector(delta, new TopKSelector()));
                 selectors.put("Floor(" + delta + ")+dedup(0.90)",
@@ -257,15 +257,15 @@ class RagEvalPgVectorIntegrationTest {
         for (var chunk : corpus) {
             jdbc.update(
                     """
-                    INSERT INTO rag_eval_corpus (
-                        id,
-                        rule_name,
-                        cluster_id,
-                        content,
-                        relevance_grade,
-                        embedding)
-                    VALUES (?, ?, ?, ?, ?, ?::vector)
-                    """,
+                            INSERT INTO rag_eval_corpus (
+                                id,
+                                rule_name,
+                                cluster_id,
+                                content,
+                                relevance_grade,
+                                embedding)
+                            VALUES (?, ?, ?, ?, ?, ?::vector)
+                            """,
                     chunk.id(),
                     chunk.ruleName(),
                     chunk.clusterId(),

@@ -11,79 +11,98 @@ import java.time.Duration;
  */
 @ConfigurationProperties(prefix = "triage")
 public record TriageProperties(
-        Llm    llm,
-        Sweep  sweep,
+        Llm llm,
+        Sweep sweep,
         String promptVersion,
-        Dev    dev,
-        Rag    rag) {
+        Dev dev,
+        Rag rag) {
 
-    /** Selects the canonical constructor for configuration binding. */
+    /**
+     * Selects the canonical constructor for configuration binding.
+     */
     @ConstructorBinding
     public TriageProperties {
     }
 
-    /** Additive ctor at the pre-ADR-30 4-arg shape — existing callers/fixtures compile unmodified. */
+    /**
+     * Additive ctor at the pre-ADR-30 4-arg shape — existing callers/fixtures compile unmodified.
+     */
     public TriageProperties(Llm llm, Sweep sweep, String promptVersion, Dev dev) {
         this(llm, sweep, promptVersion, dev, null);
     }
 
     public record Llm(
-            long  timeLimitMs,          // 12s hard cap, cancelRunningFuture=true
-            long  slowCallMs,           // slow ≥ 8s — degradation shows as latency first
+            long timeLimitMs,          // 12s hard cap, cancelRunningFuture=true
+            long slowCallMs,           // slow ≥ 8s — degradation shows as latency first
             float slowRateThreshold,    // 50%
             float failureRateThreshold, // 50%
-            int   slidingWindowSize,    // 20
-            int   halfOpenCalls,        // 3
-            long  waitOpenMs,           // CB open → half-open wait
-            int   bulkheadConcurrent,   // 5 — cost + provider rate-limit protection
-            int   rpm,                  // the billing breaker (TRIAGE_LLM_RPM env)
-            int   retryMaxAttempts,     // 3 = initial + 2 retries, transport/429/5xx ONLY
-            long  retryBackoffMs) {}    // exponential base 1s
+            int slidingWindowSize,    // 20
+            int halfOpenCalls,        // 3
+            long waitOpenMs,           // CB open → half-open wait
+            int bulkheadConcurrent,   // 5 — cost + provider rate-limit protection
+            int rpm,                  // the billing breaker (TRIAGE_LLM_RPM env)
+            int retryMaxAttempts,     // 3 = initial + 2 retries, transport/429/5xx ONLY
+            long retryBackoffMs) {
+    }    // exponential base 1s
 
-    public record Sweep(Duration staleAfter, int batch) {}
+    public record Sweep(Duration staleAfter, int batch) {
+    }
 
-    /** Dev-only prompt logging — off by default, never in compose defaults. */
-    public record Dev(boolean logPrompts) {}
+    /**
+     * Dev-only prompt logging — off by default, never in compose defaults.
+     */
+    public record Dev(boolean logPrompts) {
+    }
 
-    /** ADR-29: embedding + retrieval get fully independent R4j config — no field sharing. */
+    /**
+     * ADR-29: embedding + retrieval get fully independent R4j config — no field sharing.
+     */
     public record Rag(Embedding embedding, Retrieval retrieval, RagCorpusMode corpusMode) {
 
-        /** Selects the canonical constructor for configuration binding — same fix as the outer record. */
+        /**
+         * Selects the canonical constructor for configuration binding — same fix as the outer record.
+         */
         @ConstructorBinding
         public Rag {
         }
 
-        /** Additive ctor — pre-corpus-mode 2-arg shape, defaults to PLACEHOLDER (current local state). */
+        /**
+         * Additive ctor — pre-corpus-mode 2-arg shape, defaults to PLACEHOLDER (current local state).
+         */
         public Rag(Embedding embedding, Retrieval retrieval) {
             this(embedding, retrieval, RagCorpusMode.PLACEHOLDER);
         }
 
         public record Embedding(
-                long  timeLimitMs,
-                long  slowCallMs,
+                long timeLimitMs,
+                long slowCallMs,
                 float slowRateThreshold,
                 float failureRateThreshold,
-                int   slidingWindowSize,
-                int   halfOpenCalls,
-                long  waitOpenMs,
-                int   bulkheadConcurrent,   // sourced: OpenAI Tier-1 headroom
-                int   rpm,                  // sourced: OpenAI Tier-1 3000rpm ÷10 headroom
-                int   retryMaxAttempts,
-                long  retryBackoffMs) {}
+                int slidingWindowSize,
+                int halfOpenCalls,
+                long waitOpenMs,
+                int bulkheadConcurrent,   // sourced: OpenAI Tier-1 headroom
+                int rpm,                  // sourced: OpenAI Tier-1 3000rpm ÷10 headroom
+                int retryMaxAttempts,
+                long retryBackoffMs) {
+        }
 
-        /** No rpm — local Postgres call, not a billed API, no RateLimiter on this boundary. */
+        /**
+         * No rpm — local Postgres call, not a billed API, no RateLimiter on this boundary.
+         */
         public record Retrieval(
-                long   timeLimitMs,
-                long   slowCallMs,
-                float  slowRateThreshold,
-                float  failureRateThreshold,
-                int    slidingWindowSize,
-                int    halfOpenCalls,
-                long   waitOpenMs,
-                int    bulkheadConcurrent,
-                int    retryMaxAttempts,
-                long   retryBackoffMs,
-                int    topK,
-                double similarityThreshold) {}
+                long timeLimitMs,
+                long slowCallMs,
+                float slowRateThreshold,
+                float failureRateThreshold,
+                int slidingWindowSize,
+                int halfOpenCalls,
+                long waitOpenMs,
+                int bulkheadConcurrent,
+                int retryMaxAttempts,
+                long retryBackoffMs,
+                int topK,
+                double similarityThreshold) {
+        }
     }
 }

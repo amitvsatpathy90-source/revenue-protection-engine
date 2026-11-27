@@ -1,5 +1,6 @@
 package io.rpe.triage.config;
 
+import org.jspecify.annotations.NullMarked;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
@@ -12,6 +13,7 @@ import java.util.Objects;
  * Rejects any JWT whose {@code aud} claim does not contain this service's audience — closes the
  * OAuth2 confused-deputy hole. Error message carries no token data. Package-private.
  */
+@NullMarked
 final class AudienceValidator implements OAuth2TokenValidator<Jwt> {
 
     private static final OAuth2Error INVALID_AUDIENCE =

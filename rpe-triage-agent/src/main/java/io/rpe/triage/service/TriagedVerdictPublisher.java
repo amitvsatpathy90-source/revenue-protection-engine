@@ -4,7 +4,7 @@ import io.rpe.triage.domain.TriagedAlertMessage;
 
 /**
  * Publishes verdicts to {@code payment.alerts.triaged}.
- *
+ * <p>
  * Interface so the replay/sweep tests can capture verdicts in memory
  * (Mockito unusable on this JVM). The ONLY topic this module writes —
  * boundary rule §1: never outbox, processed_alerts, payment.alerts,
@@ -20,10 +20,4 @@ public interface TriagedVerdictPublisher {
      * @throws PublishFailedException if the broker did not confirm
      */
     void publish(TriagedAlertMessage verdict);
-
-    class PublishFailedException extends RuntimeException {
-        public PublishFailedException(String message, Throwable cause) {
-            super(message, cause);
-        }
-    }
 }

@@ -30,11 +30,11 @@ final class OfflineCandidateRetriever {
         String v = toVectorLiteral(queryVector);
 
         return jdbc.query("""
-                SELECT id, rule_name, cluster_id, content, relevance_grade,
-                       1 - (embedding <=> ?::vector) AS similarity
-                FROM rag_eval_corpus
-                ORDER BY embedding <=> ?::vector
-                LIMIT ?""",
+                        SELECT id, rule_name, cluster_id, content, relevance_grade,
+                               1 - (embedding <=> ?::vector) AS similarity
+                        FROM rag_eval_corpus
+                        ORDER BY embedding <=> ?::vector
+                        LIMIT ?""",
 
                 // Map each database row into the evaluation chunk plus its query similarity.
                 (rs, n) -> new ScoredChunk(
@@ -70,13 +70,13 @@ final class OfflineCandidateRetriever {
         String vector = toVectorLiteral(queryVector);
 
         return jdbc.query("""
-            SELECT id, rule_name, cluster_id, content, relevance_grade,
-                   1 - (embedding <=> ?::vector) AS similarity
-            FROM rag_eval_corpus
-            WHERE rule_name = ?
-            ORDER BY embedding <=> ?::vector
-            LIMIT ?
-            """,
+                        SELECT id, rule_name, cluster_id, content, relevance_grade,
+                               1 - (embedding <=> ?::vector) AS similarity
+                        FROM rag_eval_corpus
+                        WHERE rule_name = ?
+                        ORDER BY embedding <=> ?::vector
+                        LIMIT ?
+                        """,
 
                 // Map each database row into a chunk and its query-similarity score.
                 (rs, n) -> new ScoredChunk(

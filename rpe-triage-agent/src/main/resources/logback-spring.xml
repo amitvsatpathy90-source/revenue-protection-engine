@@ -31,9 +31,13 @@
     <!-- Human-readable console for local dev (run with -Dspring-boot.run.profiles=dev);
          JSON everywhere else — containers, CI, prod. -->
     <springProfile name="dev">
-        <root level="INFO"><appender-ref ref="CONSOLE"/></root>
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
     </springProfile>
     <springProfile name="!dev">
-        <root level="INFO"><appender-ref ref="JSON"/></root>
+        <root level="INFO">
+            <appender-ref ref="JSON"/>
+        </root>
     </springProfile>
 </configuration>

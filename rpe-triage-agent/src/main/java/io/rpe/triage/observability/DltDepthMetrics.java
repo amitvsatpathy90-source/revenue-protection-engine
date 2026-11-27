@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * {@code rpe.dlt.depth{topic=...}} for the DLTs {@code rpe-triage-agent} solely writes (ADR-23).
- *
+ * <p>
  * Per-service copy of the detection-service poller (no shared jar),
  * symmetric with {@code Pii} / {@code KafkaSecurity} / {@code BoundaryHandler}. Triage owns its
  * input-side DLT {@code payment.alerts.triage.DLT} (ADR-18) — NOT {@code payment.alerts.DLT}; it
@@ -33,7 +33,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * past the re-drive attempt cap (ADR-23); a non-empty parked topic is a page-worthy "manual
  * decision required" signal. Triage failures are advisory, so a backlog here never blocks the core
  * alert flow — but it is still surfaced, never silent.
- *
+ * <p>
  * Depth = Σ per partition (latest − earliest offset). All admin waits are bounded (5s) so a hung
  * broker delays, never wedges, the scheduling thread.
  */
@@ -106,7 +106,7 @@ public class DltDepthMetrics {
                 .topicNameValues().get(topic).get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
 
         Map<TopicPartition, OffsetSpec> earliestReq = new HashMap<>();
-        Map<TopicPartition, OffsetSpec> latestReq   = new HashMap<>();
+        Map<TopicPartition, OffsetSpec> latestReq = new HashMap<>();
         for (TopicPartitionInfo p : description.partitions()) {
             TopicPartition tp = new TopicPartition(topic, p.partition());
             earliestReq.put(tp, OffsetSpec.earliest());
@@ -114,7 +114,7 @@ public class DltDepthMetrics {
         }
 
         var earliest = admin.listOffsets(earliestReq).all().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
-        var latest   = admin.listOffsets(latestReq).all().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
+        var latest = admin.listOffsets(latestReq).all().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
 
         long depth = 0;
         for (TopicPartition tp : earliestReq.keySet()) {

@@ -27,14 +27,14 @@ import java.util.concurrent.ExecutorService;
  * Phase-1 tools (ADR-15 §3.4). ALL READ-ONLY — a tool needing a write is a design
  * error; stop and re-anchor (the triage agent design discipline). Never writes to outbox,
  * processed_alerts, payment.alerts, or any core Redis key.
- *
+ * <p>
  * <b>Account scoping (injection containment):</b> the model supplies {@code accountId}
  * as a tool argument, but free text in the alert could instruct it to query a
  * DIFFERENT account. Each call is therefore validated against the triage run's own
  * account (passed via {@link ToolContext}, which the model cannot influence); a
  * mismatch returns a bounded error string and increments
  * {@code triage.tool.account_mismatch} — a live injection-attempt signal.
- *
+ * <p>
  * Responses are bounded (≤ {@value #MAX_EVENTS} items — rules §4): no unbounded
  * history dumps into the prompt.
  */
@@ -44,8 +44,8 @@ public class TriageTools {
     private static final Logger log = LoggerFactory.getLogger(TriageTools.class);
 
     public static final String TOOL_ACCOUNT_HISTORY = "redisAccountHistory";
-    public static final String TOOL_RECENT_ALERTS   = "recentAlertsForAccount";
-    public static final String CTX_ACCOUNT_ID       = "accountId";
+    public static final String TOOL_RECENT_ALERTS = "recentAlertsForAccount";
+    public static final String CTX_ACCOUNT_ID = "accountId";
 
     private static final String ACCOUNT_MISMATCH_ERROR =
             "{\"error\":\"account mismatch: tools may only query the alert's own account\"}";
@@ -53,10 +53,10 @@ public class TriageTools {
     private static final int MAX_EVENTS = 20;
 
     private final StringRedisTemplate redis;
-    private final DataSource          dataSource;
-    private final ExecutorService     jdbcExecutor;
-    private final ObjectMapper        objectMapper;
-    private final MeterRegistry       meterRegistry;
+    private final DataSource dataSource;
+    private final ExecutorService jdbcExecutor;
+    private final ObjectMapper objectMapper;
+    private final MeterRegistry meterRegistry;
 
     public TriageTools(
             StringRedisTemplate redis,
@@ -64,10 +64,10 @@ public class TriageTools {
             @Qualifier("jdbcExecutor") ExecutorService jdbcExecutor,
             ObjectMapper objectMapper,
             MeterRegistry meterRegistry) {
-        this.redis         = redis;
-        this.dataSource    = dataSource;
-        this.jdbcExecutor  = jdbcExecutor;
-        this.objectMapper  = objectMapper;
+        this.redis = redis;
+        this.dataSource = dataSource;
+        this.jdbcExecutor = jdbcExecutor;
+        this.objectMapper = objectMapper;
         this.meterRegistry = meterRegistry;
     }
 
@@ -93,7 +93,7 @@ public class TriageTools {
             Map<Object, Object> geo = redis.opsForHash().entries("geo:" + scoped);
             snapshot.put("lastLocationTimestampMs", geo.getOrDefault("ts", null));
 
-            Set<String> recent = redis.opsForZSet().reverseRange("vel:" + scoped, 0, MAX_EVENTS - 1);
+            Set<String> recent = redis.opsForZSet().reverseRange("vel:" + scoped, 0, MAX_EVENTS - 1L);
             snapshot.put("recentEventIdsInWindow", recent == null ? List.of() : recent);
 
             return objectMapper.writeValueAsString(snapshot);
@@ -126,10 +126,12 @@ public class TriageTools {
         }
     }
 
-    /** JDBC on the dedicated platform pool only — PgJDBC pins VT carriers. */
+    /**
+     * JDBC on the dedicated platform pool only — PgJDBC pins VT carriers.
+     */
     private List<Map<String, Object>> queryRecentAlerts(String accountId) {
         String sql = "SELECT rule_name, produced_at FROM processed_alerts "
-                   + "WHERE account_id = ? ORDER BY produced_at DESC LIMIT " + MAX_EVENTS;
+                + "WHERE account_id = ? ORDER BY produced_at DESC LIMIT " + MAX_EVENTS;
         try (Connection conn = dataSource.getConnection();
              var ps = conn.prepareStatement(sql)) {
             ps.setQueryTimeout(5);
@@ -150,7 +152,7 @@ public class TriageTools {
 
     /**
      * @return the alert's own account id, or {@code null} when the model asked for a
-     *         different account (injection attempt or hallucinated argument).
+     * different account (injection attempt or hallucinated argument).
      */
     private String requireAlertAccount(String requested, ToolContext toolContext, String tool) {
         Object expected = toolContext.getContext().get(CTX_ACCOUNT_ID);

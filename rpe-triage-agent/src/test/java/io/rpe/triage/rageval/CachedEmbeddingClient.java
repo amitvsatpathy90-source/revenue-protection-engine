@@ -50,7 +50,8 @@ final class CachedEmbeddingClient {
         this.cache = Files.exists(cacheFile)
                 ? mapper.readValue(
                 cacheFile.toFile(),
-                new TypeReference<Map<String, float[]>>() {})
+                new TypeReference<Map<String, float[]>>() {
+                })
                 : new LinkedHashMap<>();
     }
 

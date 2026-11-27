@@ -30,9 +30,10 @@ class RagSeedConsistencyTest {
         var m = ROW_HEAD.matcher(sql);
         while (m.find()) seeded.add(m.group(1));
 
-        // Guards against the regex silently matching nothing
-        assertThat(seeded).isNotEmpty();
-
-        assertThat(seeded).isEqualTo(new TreeSet<>(TriageAgent.TOOLS_BY_RULE.keySet()));
+// Guards against the regex silently matching nothing.
+        assertThat(seeded)
+                .isNotEmpty()
+                .isEqualTo(new TreeSet<>(TriageAgent.TOOLS_BY_RULE.keySet()));
     }
 }
+

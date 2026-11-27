@@ -3,6 +3,7 @@ package io.rpe.triage.agent;
 import io.rpe.triage.TriageTestSupport;
 import io.rpe.triage.config.LlmResilienceConfig;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.model.ChatModel;
@@ -20,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Tests {@link TriageLlmClient#newToolCallingOptionsBuilder()}.
+ *
  * <p>
  * Regression: a generic {@code ToolCallingChatOptions} made {@code OpenAiChatModel}
  * throw {@code ClassCastException}, degrading alerts with {@code reason=llm-error}.
@@ -50,12 +52,12 @@ class TriageLlmClientOptionsTest {
 
         ChatModel model = new ChatModel() {
             @Override
-            public ChatResponse call(Prompt prompt) {
+            public @NonNull ChatResponse call(@NonNull Prompt prompt) {
                 throw new UnsupportedOperationException("Not used in this test");
             }
 
             @Override
-            public OpenAiChatOptions getOptions() {
+            public @NonNull OpenAiChatOptions getOptions() {
                 return modelDefaults;
             }
         };
@@ -81,12 +83,14 @@ class TriageLlmClientOptionsTest {
         assertThat(modelDefaults.getTemperature()).isEqualTo(0.7);
     }
 
-    /** Verifies a generic builder is returned when the model exposes no options. */
+    /**
+     * Verifies a generic builder is returned when the model exposes no options.
+     */
     @Test
     void fallsBackWhenModelDoesNotExposeOptions() {
         ChatModel model = new ChatModel() {
             @Override
-            public ChatResponse call(Prompt prompt) {
+            public @NonNull ChatResponse call(@NonNull Prompt prompt) {
                 throw new UnsupportedOperationException("Not used in this test");
             }
 
@@ -112,4 +116,3 @@ class TriageLlmClientOptionsTest {
                 model, resilience, executor, registry, "test");
     }
 }
-

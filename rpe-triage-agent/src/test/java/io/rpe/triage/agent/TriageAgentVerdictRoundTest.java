@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.rpe.triage.TriageTestSupport;
 import io.rpe.triage.config.LlmResilienceConfig;
 import io.rpe.triage.config.TriageProperties;
+import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -104,6 +105,7 @@ class TriageAgentVerdictRoundTest {
     }
 
     private static List<ToolCallback> toolsOf(Prompt prompt) {
+        assert prompt.getOptions() != null;
         var callbacks = ((ToolCallingChatOptions) prompt.getOptions()).getToolCallbacks();
         return callbacks == null ? List.of() : callbacks;
     }
@@ -128,9 +130,10 @@ class TriageAgentVerdictRoundTest {
         }
 
         @Override
-        public ChatResponse call(Prompt prompt) {
+        public ChatResponse call(@NonNull Prompt prompt) {
             prompts.add(prompt);
-            return script.size() > 1 ? script.poll() : script.peek();
+            return script.size() > 1 ? script.removeFirst() : script.getFirst();
         }
     }
 }
+

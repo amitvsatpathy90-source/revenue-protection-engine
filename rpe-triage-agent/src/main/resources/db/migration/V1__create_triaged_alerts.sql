@@ -7,8 +7,9 @@
 --   PENDING_TRIAGE        inbox row inserted; verdict not yet produced
 --   LLM_TRIAGED           agent verdict produced + recorded
 --   DEGRADED_RULE_BASED   fallback verdict (CB open / failure / stale sweep)
-CREATE TABLE triaged_alerts (
-    alert_id       UUID        PRIMARY KEY,
+CREATE TABLE triaged_alerts
+(
+    alert_id       UUID PRIMARY KEY,
     account_id     TEXT        NOT NULL,
     rule_name      TEXT        NOT NULL,
     triage_status  TEXT        NOT NULL DEFAULT 'PENDING_TRIAGE',

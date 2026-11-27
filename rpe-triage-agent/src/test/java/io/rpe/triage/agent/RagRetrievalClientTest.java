@@ -95,7 +95,8 @@ class RagRetrievalClientTest {
         return "no-exception";
     }
 
-    @Test // Non-retryable failure maps to error on both paths
+    @Test
+        // Non-retryable failure maps to error on both paths
     void repositoryFailureMapsToErrorOnBothEntryPoints() {
         try (var rig = new Rig(props(5000, 20, 5))) {
             rig.repo.failure.set(new IllegalStateException("db down"));
@@ -106,7 +107,8 @@ class RagRetrievalClientTest {
         }
     }
 
-    @Test // Query outlives the 100ms TimeLimiter
+    @Test
+        // Query outlives the 100ms TimeLimiter
     void slowQueryMapsToTimeout() {
         try (var rig = new Rig(props(100, 20, 5))) {
             rig.repo.sleepMs = 1000;
@@ -115,7 +117,8 @@ class RagRetrievalClientTest {
         }
     }
 
-    @Test // Window 2: two failures open CB, third call rejected
+    @Test
+        // Window 2: two failures open CB, third call rejected
     void openCircuitRejectsWithoutTouchingRepository() {
         try (var rig = new Rig(props(5000, 2, 5))) {
             rig.repo.failure.set(new IllegalStateException("db down"));
@@ -129,7 +132,8 @@ class RagRetrievalClientTest {
         }
     }
 
-    @Test // First caller parks in repo holding the only permit
+    @Test
+        // First caller parks in repo holding the only permit
     void fullBulkheadRejectsSecondCaller() throws InterruptedException {
         try (var rig = new Rig(props(5000, 20, 1))) {
             var latch = new CountDownLatch(1);
@@ -151,7 +155,8 @@ class RagRetrievalClientTest {
         }
     }
 
-    @Test // Counter moves only on an empty keyed result
+    @Test
+        // Counter moves only on an empty keyed result
     void emptyResultCountsOnlyWhenKeyedLookupFindsNothing() {
         try (var rig = new Rig(props(5000, 20, 5))) {
             rig.client.retrieveByRule("no_such_rule", 5);
@@ -162,7 +167,8 @@ class RagRetrievalClientTest {
         }
     }
 
-    @Test // Covers instance separation only, not Spring bean wiring
+    @Test
+        // Covers instance separation only, not Spring bean wiring
     void retrievalCircuitOpenLeavesChatCircuitClosed() {
         var chat = new LlmResilienceConfig().llmResilience(
                 TriageTestSupport.lenientProps(), new SimpleMeterRegistry());
