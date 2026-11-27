@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Pins the admin-client transport-security fold (ADR-20).
  *
- * The observability pollers' {@code Admin} client is a Kafka client like any other: without the
+ * <p>The observability pollers' {@code Admin} client is a Kafka client like any other: without the
  * securityProps fold it connects credential-less under SASL_SSL, every depth poll fails inside
  * the {@code @BoundaryHandler} poller (warn-log, absorbed), and every {@code rpe.dlt.depth}
  * gauge freezes at its boot value 0 — false-healthy, silently disarming the ADR-23 RpeDlt*
@@ -33,14 +33,14 @@ class KafkaAdminSecurityPropsTest {
         Map<String, Object> props = config.adminProps(kafkaAdmin);
 
         assertThat(props)
-                .as("autoconfigured admin props (bootstrap etc.) must be preserved")
-                .containsEntry(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, "broker:9092");
-        assertThat(props)
-                .as("the admin client must authenticate exactly like every other factory "
+                .as("autoconfigured admin props (bootstrap etc.) must be preserved; "
+                        + "the admin client must authenticate exactly like every other factory "
                         + "(ADR-20) — credential-less = every depth gauge frozen at 0")
+                .containsEntry(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, "broker:9092")
                 .containsEntry(CommonClientConfigs.SECURITY_PROTOCOL_CONFIG, "SASL_SSL")
                 .containsEntry(SaslConfigs.SASL_MECHANISM, "SCRAM-SHA-512")
                 .containsKey(SaslConfigs.SASL_JAAS_CONFIG);
+
         assertThat(String.valueOf(props.get(SaslConfigs.SASL_JAAS_CONFIG)))
                 .contains("username=\"rpe-detection\"");
     }

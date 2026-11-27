@@ -8,12 +8,12 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * Revenue Protection Engine — payment-event anomaly detection.
- *
+ * <p>
  * Runtime surface split (ADR-01):
- *   HTTP / actuator : WebFlux (Netty) — non-blocking I/O
- *   Kafka consumer  : Virtual threads via @KafkaListener
- *   Redis hot path  : Reactive Lettuce (non-blocking, does not pin VT carriers)
- *   JDBC (outbox)   : Dedicated platform-thread pool (PgJDBC synchronized pins VTs)
+ * HTTP / actuator : WebFlux (Netty) — non-blocking I/O
+ * Kafka consumer  : Virtual threads via @KafkaListener
+ * Redis hot path  : Reactive Lettuce (non-blocking, does not pin VT carriers)
+ * JDBC (outbox)   : Dedicated platform-thread pool (PgJDBC synchronized pins VTs)
  */
 @SpringBootApplication
 @EnableConfigurationProperties(RpeProperties.class)

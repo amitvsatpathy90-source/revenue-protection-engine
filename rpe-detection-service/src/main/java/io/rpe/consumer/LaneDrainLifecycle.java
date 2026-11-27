@@ -13,17 +13,17 @@ import java.util.concurrent.TimeUnit;
 /**
  * Graceful-shutdown drain of the per-account lanes (ADR-22).
  *
- * <b>Phase ordering is the whole point.</b> Spring stops {@link SmartLifecycle} beans in
+ * <p><b>Phase ordering is the whole point.</b> Spring stops {@link SmartLifecycle} beans in
  * DESCENDING phase order. Spring Kafka listener containers stop at
  * {@link AbstractMessageListenerContainer#DEFAULT_PHASE} ({@code Integer.MAX_VALUE - 100}).
  * This bean sits at {@code DEFAULT_PHASE - 10}, so it stops strictly AFTER the consumer
  * container — i.e. once ingestion has ceased and no new lane task can be submitted. That is
  * the precondition for a clean drain: we await only the tasks already in flight.
  *
- * Stop order overall: web drain → Kafka container stop → THIS (lane drain) → outbox flush
+ * <p>Stop order overall: web drain → Kafka container stop → THIS (lane drain) → outbox flush
  * → pool shutdown. See {@code docs/adrs/lifecycle-shutdown.md}.
  *
- * Bounded: lanes are drained within {@link #DRAIN_TIMEOUT}. A timeout is not data loss — the
+ * <p>Bounded: lanes are drained within {@link #DRAIN_TIMEOUT}. A timeout is not data loss — the
  * Kafka offsets of un-acked in-flight events stay uncommitted and are redelivered on restart
  * (dedup + deterministic alert_id make replay safe, ADR-13). It IS surfaced loudly via
  * {@code rpe.shutdown.forced{component=lanes}} so a chronically slow drain is visible.
@@ -31,19 +31,21 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class LaneDrainLifecycle implements SmartLifecycle {
 
-    /** One rung below the Kafka container: stop AFTER ingestion stops (see class doc). */
+    /**
+     * One rung below the Kafka container: stop AFTER ingestion stops.
+     */
     static final int PHASE = AbstractMessageListenerContainer.DEFAULT_PHASE - 10;
 
-    private static final Logger   log           = LoggerFactory.getLogger(LaneDrainLifecycle.class);
+    private static final Logger log = LoggerFactory.getLogger(LaneDrainLifecycle.class);
     private static final Duration DRAIN_TIMEOUT = Duration.ofSeconds(5);
 
     private final LaneExecutorService lanes;
-    private final MeterRegistry       meterRegistry;
+    private final MeterRegistry meterRegistry;
 
     private volatile boolean running;
 
     public LaneDrainLifecycle(LaneExecutorService lanes, MeterRegistry meterRegistry) {
-        this.lanes         = lanes;
+        this.lanes = lanes;
         this.meterRegistry = meterRegistry;
     }
 
@@ -71,7 +73,7 @@ public class LaneDrainLifecycle implements SmartLifecycle {
         if (result.forced()) {
             meterRegistry.counter("rpe.shutdown.forced", "component", "lanes").increment();
             log.warn("Lane drain timed out: {}/{} lanes drained within {}s — remaining tasks "
-                    + "abandoned; their offsets stay uncommitted and redeliver on restart (dedup-safe)",
+                            + "abandoned; their offsets stay uncommitted and redeliver on restart (dedup-safe)",
                     result.drained(), result.lanes(), DRAIN_TIMEOUT.toSeconds());
         } else {
             log.info("Lane drain complete: {}/{} lanes drained cleanly", result.drained(), result.lanes());

@@ -19,18 +19,20 @@ import java.util.concurrent.TimeUnit;
  * {@code false} only on a sustained breach (→ DLT). Called INSIDE the lane task, never on the
  * Kafka consumer thread (ADR-03).
  *
- * <b>Distributed primary, local degraded fallback (ADR-24):</b>
+ * <p><b>Distributed primary, local degraded fallback (ADR-24):</b>
  * <ul>
  *   <li><b>Primary:</b> {@link DistributedRateLimiter} — an atomic Redis token bucket shared by
  *       all replicas, so the global limit is {@code rate/s} regardless of replica count N. This
- *       closes ADR-03's {@code global = N × per_instance}.</li>
+ *       closes ADR-03's {@code global = N × per_instance}.
+ *   </li>
  *   <li><b>Degraded:</b> when the {@code ratelimit} CB is open or Redis errors, falls back to the
  *       per-instance Guava {@link RateLimiter} (today's behaviour) — bounded {@code N × rate/s},
  *       self-healing. Never fails closed: dropping an unrepeatable payment event over a Redis blip
- *       is exactly what ADR-03 forbids.</li>
+ *       is exactly what ADR-03 forbids.
+ *   </li>
  * </ul>
  *
- * <b>Throttle, not drop:</b> on a distributed deny the lane VT parks for the bucket-reported
+ * <p><b>Throttle, not drop:</b> on a distributed deny the lane VT parks for the bucket-reported
  * {@code waitMs} (bounded by {@code acquireTimeoutMs}) and retries — replicating Guava's blocking
  * {@code tryAcquire(5s)}. The lane is single-threaded per account, so the park preserves ordering.
  */
@@ -45,7 +47,9 @@ public class RateLimiterService {
     private final DistributedRateLimiter distributedRateLimiter;
     private final MeterRegistry meterRegistry;
 
-    /** Per-instance limiter map — the degraded fallback when the distributed limiter is down. */
+    /**
+     * Per-instance limiter map — the degraded fallback when the distributed limiter is down.
+     */
     private final Cache<String, RateLimiter> localLimiterCache;
 
     public RateLimiterService(
@@ -53,10 +57,10 @@ public class RateLimiterService {
             AccountClassificationService classificationService,
             DistributedRateLimiter distributedRateLimiter,
             MeterRegistry meterRegistry) {
-        this.props                  = props;
-        this.classificationService  = classificationService;
+        this.props = props;
+        this.classificationService = classificationService;
         this.distributedRateLimiter = distributedRateLimiter;
-        this.meterRegistry          = meterRegistry;
+        this.meterRegistry = meterRegistry;
         this.localLimiterCache = Caffeine.newBuilder()
                 .maximumSize(50_000)
                 .expireAfterAccess(10, TimeUnit.MINUTES)
@@ -87,20 +91,22 @@ public class RateLimiterService {
             }
 
             if (decision.allowed()) {
-                record(sample, "allowed", "distributed");
+                eventRecord(sample, "allowed", "distributed");
                 return true;
             }
 
             long remainingMs = remainingMs(deadlineNanos);
             if (remainingMs <= 0) {
-                record(sample, "breach", "distributed");
-                log.warn("Rate limit sustained breach for account ...{} — routing to DLT",
-                        Pii.maskAccountId(accountId));
+                eventRecord(sample, "breach", "distributed");
+                if (log.isWarnEnabled()) {
+                    log.warn("Rate limit sustained breach for account ...{} — routing to DLT",
+                            Pii.maskAccountId(accountId));
+                }
                 return false;
             }
             // Park the lane VT until a token accrues (bounded by the remaining budget). VT park
             // does not pin a carrier — same model as RedisGate/AccountClassificationService.
-            parkBounded(Math.min(Math.max(1, decision.waitMs()), remainingMs));
+            parkBounded(Math.clamp(decision.waitMs(), 1, remainingMs));
         }
     }
 
@@ -119,8 +125,8 @@ public class RateLimiterService {
         }
         long remainingMs = Math.max(0, remainingMs(deadlineNanos));
         boolean acquired = limiter.tryAcquire((int) remainingMs, TimeUnit.MILLISECONDS);
-        record(sample, acquired ? "allowed" : "breach", "local");
-        if (!acquired) {
+        eventRecord(sample, acquired ? "allowed" : "breach", "local");
+        if (!acquired && log.isWarnEnabled()) {
             log.warn("Rate limit sustained breach (degraded/local) for account ...{} — routing to DLT",
                     Pii.maskAccountId(accountId));
         }
@@ -149,8 +155,9 @@ public class RateLimiterService {
         }
     }
 
-    private void record(Timer.Sample sample, String outcome, String mode) {
+    private void eventRecord(Timer.Sample sample, String outcome, String mode) {
         meterRegistry.counter("rpe.ratelimit.decision", "outcome", outcome, "mode", mode).increment();
         sample.stop(meterRegistry.timer("rpe.ratelimit.wait", "outcome", outcome));
     }
 }
+

@@ -7,12 +7,18 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
-/** Shared builders for detector unit tests. */
+/**
+ * Shared builders for detector unit tests.
+ */
 final class DetectorTestFixtures {
 
-    private DetectorTestFixtures() {}
+    private DetectorTestFixtures() {
+    }
 
-    /** Detection-only properties; non-detection sections are unused by detectors. */
+    /**
+     * Detection-only properties; non-detection sections are unused by detectors.
+     */
+    @SuppressWarnings("SameParameterValue")
     static RpeProperties props(int velocityMaxEvents, double zScoreThreshold, double geoMaxSpeedKmh) {
         return new RpeProperties(
                 new RpeProperties.ResilienceProperties(new RpeProperties.RedisResilienceProperties(500)),

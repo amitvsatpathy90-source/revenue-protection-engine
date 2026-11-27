@@ -16,6 +16,7 @@ import reactor.core.scheduler.Scheduler;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -55,10 +56,17 @@ public class OutboxBatchWriter implements SmartLifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(OutboxBatchWriter.class);
 
+    private static final String METRIC_OUTBOX_DROPPED = "rpe.outbox.dropped";
+    private static final String TAG_REASON = "reason";
+    private static final String TAG_COMPONENT = "component";
+    private static final String COMPONENT_OUTBOX = "outbox";
+
     private static final int DEFAULT_FLUSH_THRESHOLD = 100;
 
-    /** ~1KB per intent → bounded at ~10MB heap worst-case during a Postgres outage. */
-    private static final int DEFAULT_QUEUE_CAPACITY  = 10_000;
+    /**
+     * ~1KB per intent → bounded at ~10MB heap worst-case during a Postgres outage.
+     */
+    private static final int DEFAULT_QUEUE_CAPACITY = 10_000;
 
     /**
      * Two rungs below the Kafka container (ADR-22). The lane drain runs at
@@ -68,29 +76,38 @@ public class OutboxBatchWriter implements SmartLifecycle {
      */
     static final int PHASE = AbstractMessageListenerContainer.DEFAULT_PHASE - 20;
 
-    /** Bound on the final drain-flush at shutdown. Postgres-down is detected by no-progress
-     *  (re-queue keeps the size flat) and breaks early rather than spinning to this deadline. */
+    /**
+     * Bound on the final drain-flush at shutdown. Postgres-down is detected by no-progress
+     * (re-queue keeps the size flat) and breaks early rather than spinning to this deadline.
+     */
     private static final Duration SHUTDOWN_FLUSH_TIMEOUT = Duration.ofSeconds(5);
 
     private volatile boolean running;
 
-    private final DataSource     dataSource;
+    private final DataSource dataSource;
 
-    /** All JDBC in this class hops here — the dedicated platform-thread pool (see purgeOutbox). */
-    private final Scheduler      jdbcScheduler;
+    /**
+     * All JDBC in this class hops here — the dedicated platform-thread pool (see purgeOutbox).
+     */
+    private final Scheduler jdbcScheduler;
 
-    private final MeterRegistry  meterRegistry;
+    private final MeterRegistry meterRegistry;
 
     private final int flushThreshold;
     private final int queueCapacity;
     private final LinkedBlockingQueue<AlertIntent> queue;
     private final Semaphore flushPermit = new Semaphore(1);
 
-    /** Volatile: written by start()/stop(), read by submitting lane/jdbc threads in wakeFlusher(). */
+    /**
+     * Volatile: written by start()/stop(), read by submitting lane/jdbc threads in wakeFlusher().
+     */
     private volatile ScheduledExecutorService scheduler;
 
     @Autowired
-    public OutboxBatchWriter(DataSource dataSource, Scheduler jdbcScheduler, MeterRegistry meterRegistry) {
+    public OutboxBatchWriter(
+            DataSource dataSource,
+            Scheduler jdbcScheduler,
+            MeterRegistry meterRegistry) {
         this(dataSource, jdbcScheduler, meterRegistry, DEFAULT_QUEUE_CAPACITY, DEFAULT_FLUSH_THRESHOLD);
     }
 
@@ -98,14 +115,19 @@ public class OutboxBatchWriter implements SmartLifecycle {
      * Package-private: lets tests use a tiny capacity/threshold to drive the drop and
      * flush paths deterministically without filling 10,000 entries.
      */
-    OutboxBatchWriter(DataSource dataSource, Scheduler jdbcScheduler, MeterRegistry meterRegistry,
-                      int queueCapacity, int flushThreshold) {
-        this.dataSource     = dataSource;
-        this.jdbcScheduler  = jdbcScheduler;
-        this.meterRegistry  = meterRegistry;
-        this.queueCapacity  = queueCapacity;
+    OutboxBatchWriter(
+            DataSource dataSource,
+            Scheduler jdbcScheduler,
+            MeterRegistry meterRegistry,
+            int queueCapacity,
+            int flushThreshold) {
+        this.dataSource = dataSource;
+        this.jdbcScheduler = jdbcScheduler;
+        this.meterRegistry = meterRegistry;
+        this.queueCapacity = queueCapacity;
         this.flushThreshold = flushThreshold;
-        this.queue          = new LinkedBlockingQueue<>(queueCapacity);
+        this.queue = new LinkedBlockingQueue<>(queueCapacity);
+
         Gauge.builder("rpe.outbox.queue.size", queue, LinkedBlockingQueue::size)
                 .description("Alert intents awaiting batch flush to the outbox table")
                 .register(meterRegistry);
@@ -118,7 +140,12 @@ public class OutboxBatchWriter implements SmartLifecycle {
             t.setDaemon(true);
             return t;
         });
-        scheduler.scheduleAtFixedRate(this::flushIfPending, 50, 50, TimeUnit.MILLISECONDS);
+
+        scheduler.scheduleAtFixedRate(
+                this::flushIfPending,
+                50,
+                50,
+                TimeUnit.MILLISECONDS);
         running = true;
     }
 
@@ -153,22 +180,30 @@ public class OutboxBatchWriter implements SmartLifecycle {
 
         log.info("Graceful shutdown: final outbox flush ({} intent(s) pending, ≤{}s)",
                 queue.size(), SHUTDOWN_FLUSH_TIMEOUT.toSeconds());
-        long startNanos    = System.nanoTime();
+
+        long startNanos = System.nanoTime();
         long deadlineNanos = startNanos + SHUTDOWN_FLUSH_TIMEOUT.toNanos();
         int before;
+
         do {
             before = queue.size();
             flushIfPending();
-        } while (!queue.isEmpty() && queue.size() < before && System.nanoTime() < deadlineNanos);
+        } while (!queue.isEmpty()
+                && queue.size() < before
+                && System.nanoTime() < deadlineNanos);
 
-        meterRegistry.timer("rpe.shutdown.drain.duration", "component", "outbox")
+        meterRegistry.timer("rpe.shutdown.drain.duration", TAG_COMPONENT, COMPONENT_OUTBOX)
                 .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
+
         int abandoned = queue.size();
         if (abandoned > 0) {
-            meterRegistry.counter("rpe.shutdown.forced", "component", "outbox").increment();
-            meterRegistry.counter("rpe.outbox.dropped", "reason", "shutdown_timeout").increment(abandoned);
+            meterRegistry.counter("rpe.shutdown.forced", TAG_COMPONENT, COMPONENT_OUTBOX).increment();
+            meterRegistry.counter(METRIC_OUTBOX_DROPPED, TAG_REASON, "shutdown_timeout")
+                    .increment(abandoned);
+
             log.warn("Outbox flush incomplete at shutdown: {} intent(s) un-flushed (Postgres "
-                    + "unavailable or deadline hit) — within the ADR-12 loss window; table intact", abandoned);
+                            + "unavailable or deadline hit) — within the ADR-12 loss window; table intact",
+                    abandoned);
         } else {
             log.info("Outbox flush complete: queue fully drained at shutdown");
         }
@@ -206,22 +241,28 @@ public class OutboxBatchWriter implements SmartLifecycle {
     @BoundaryHandler("scheduled-purge-must-survive any failure; logs and the next fixedDelay run retries")
     public void purgeOutbox() {
         try {
-            // block(), not subscribe(): fixedDelay measures from completion, so the next run must
-            // not overlap a still-running purge.
-            Mono.fromCallable(this::executePurge).subscribeOn(jdbcScheduler).block();
+            // block(), not subscribe(): fixedDelay measures from completion,
+            // so the next run must not overlap a still-running purge.
+            Mono.fromCallable(this::executePurge)
+                    .subscribeOn(jdbcScheduler)
+                    .block();
         } catch (Exception e) {
             log.error("Outbox purge failed", e);
         }
     }
 
-    /** The purge statement itself — only ever invoked on {@code jdbcScheduler} (see purgeOutbox). */
-    private int executePurge() throws Exception {
+    /**
+     * The purge statement itself — only ever invoked on {@code jdbcScheduler} (see purgeOutbox).
+     */
+    private int executePurge() throws SQLException {
         String sql = "DELETE FROM outbox WHERE status = 'PUBLISHED' "
-                   + "AND created_at < now() - interval '7 days'";
+                + "AND created_at < now() - interval '7 days'";
+
         try (Connection conn = dataSource.getConnection();
              var stmt = conn.prepareStatement(sql)) {
             stmt.setQueryTimeout(60);
             int deleted = stmt.executeUpdate();
+
             if (deleted > 0) {
                 log.info("Outbox purge completed: {} PUBLISHED rows removed", deleted);
             }
@@ -243,9 +284,9 @@ public class OutboxBatchWriter implements SmartLifecycle {
      * the queue is full, then triggers an immediate flush at the batch threshold.
      *
      * @return {@code true} if the intent was durably enqueued (will be flushed to the outbox table);
-     *         {@code false} if the queue stayed full past {@link #OFFER_BACKPRESSURE_MS} — the caller
-     *         MUST then route the event to the DLT (not ack), so a Postgres outage never turns into a
-     *         silently-dropped alert on a committed offset.
+     * {@code false} if the queue stayed full past {@link #OFFER_BACKPRESSURE_MS} — the caller
+     * MUST then route the event to the DLT (not ack), so a Postgres outage never turns into a
+     * silently-dropped alert on a committed offset.
      *
      * <p>Called from a lane VT via:
      * <pre>{@code
@@ -261,20 +302,28 @@ public class OutboxBatchWriter implements SmartLifecycle {
             Thread.currentThread().interrupt();
             enqueued = false;
         }
+
         if (!enqueued) {
             // Queue full past the backpressure window = sustained Postgres outage. Loud, and the caller
             // preserves the event on the DLT for redrive — never a silent drop on a committed offset.
-            meterRegistry.counter("rpe.outbox.dropped", "reason", "queue_full").increment();
+            meterRegistry.counter(METRIC_OUTBOX_DROPPED, TAG_REASON, "queue_full").increment();
             log.error("Outbox queue full ({}) after {}ms backpressure: alert NOT enqueued, alertId={} "
-                    + "— caller routes event to DLT", queueCapacity, OFFER_BACKPRESSURE_MS, intent.alertId());
+                            + "— caller routes event to DLT",
+                    queueCapacity, OFFER_BACKPRESSURE_MS, intent.alertId());
             return false;
         }
+
         // Confirmation half of the in-flight gap metric: the intent is now safely held in the
-        // volatile queue. delta(rpe.hotpath.alerts.submitted - rpe.hotpath.alerts.buffered),
+        // volatile queue.
+        //
+        // delta(rpe.hotpath.alerts.submitted - rpe.hotpath.alerts.buffered),
         // measured against the consumer-side submitted counter, is the count of alerts still
-        // in the async hop (dispatched, not yet buffered) at any instant. Dropped intents
-        // (queue_full above) are intentionally NOT counted here — they never reach safety.
+        // in the async hop (dispatched, not yet buffered) at any instant.
+        //
+        // Dropped intents (queue_full above) are intentionally NOT counted here —
+        // they never reach safety.
         meterRegistry.counter("rpe.hotpath.alerts.buffered").increment();
+
         if (queue.size() >= flushThreshold) {
             wakeFlusher();
         }
@@ -330,42 +379,55 @@ public class OutboxBatchWriter implements SmartLifecycle {
     private void flush() {
         List<AlertIntent> batch = new ArrayList<>();
         queue.drainTo(batch, flushThreshold * 2);
-        if (batch.isEmpty()) return;
+        if (batch.isEmpty()) {
+            return;
+        }
 
         String sql = "INSERT INTO outbox(id, account_id, payload, status, attempts, traceparent, tracestate) "
-                   + "VALUES (?::uuid, ?, ?::jsonb, 'PENDING', 0, ?, ?) ON CONFLICT (id) DO NOTHING";
+                + "VALUES (?::uuid, ?, ?::jsonb, 'PENDING', 0, ?, ?) ON CONFLICT (id) DO NOTHING";
 
         try (Connection conn = dataSource.getConnection()) {
             conn.setAutoCommit(false);
+
             // SET LOCAL synchronous_commit=off: bounded 200ms WAL flush loss window.
             // Production upgrade: remove this statement for full synchronous durability (ADR-12).
             try (var stmt = conn.createStatement()) {
                 stmt.setQueryTimeout(10);
                 stmt.execute("SET LOCAL synchronous_commit=off");
             }
+
             try (var pstmt = conn.prepareStatement(sql)) {
                 pstmt.setQueryTimeout(10);
+
                 for (AlertIntent intent : batch) {
                     pstmt.setString(1, intent.alertId().toString());
                     pstmt.setString(2, intent.accountId());
                     pstmt.setString(3, intent.payload().toString());
+
                     // Nullable W3C trace context (ADR-25): setString(null) binds SQL NULL.
                     pstmt.setString(4, intent.traceparent());
                     pstmt.setString(5, intent.tracestate());
                     pstmt.addBatch();
                 }
+
                 pstmt.executeBatch();
             }
+
             conn.commit();
             meterRegistry.counter("rpe.outbox.flush.success").increment(batch.size());
+
             // Relay wakeup is cross-process: the V4 outbox AFTER-INSERT trigger fires
             // pg_notify('outbox_ready') once per batch, which the (separately deployed)
-            // rpe-relay-service LISTENs on. The former in-process RelayTrigger.signal()
-            // was the co-located fast-path only — a no-op once the relay is extracted
-            // (ADR-05 / ADR-17 §7 Stage 1). Signal is an optimisation, not correctness:
+            // rpe-relay-service LISTENs on.
+            //
+            // The former in-process RelayTrigger.signal() was the co-located fast-path
+            // only — a no-op once the relay is extracted (ADR-05 / ADR-17 §7 Stage 1).
+            //
+            // Signal is an optimisation, not correctness:
             // the relay re-queries the outbox on every poll regardless.
         } catch (Exception e) {
             meterRegistry.counter("rpe.outbox.flush.failure").increment(batch.size());
+
             // Re-queue for the next flush cycle — deterministic alert_id + ON CONFLICT (id)
             // DO NOTHING make re-inserting a partially-committed batch idempotent.
             int requeued = 0;
@@ -373,10 +435,11 @@ public class OutboxBatchWriter implements SmartLifecycle {
                 if (queue.offer(intent)) {
                     requeued++;
                 } else {
-                    meterRegistry.counter("rpe.outbox.dropped", "reason", "requeue_full").increment();
+                    meterRegistry.counter(METRIC_OUTBOX_DROPPED, TAG_REASON, "requeue_full").increment();
                     log.error("Outbox re-queue full: dropping alert intent alertId={}", intent.alertId());
                 }
             }
+
             log.error("Outbox batch flush failed for {} intents ({} re-queued): {}",
                     batch.size(), requeued, e.getMessage(), e);
         }

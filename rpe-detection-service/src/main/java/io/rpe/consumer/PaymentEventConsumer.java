@@ -23,6 +23,7 @@ import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.TopicPartition;
+import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -35,6 +36,7 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
 import reactor.util.retry.Retry;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -51,22 +53,21 @@ import java.util.concurrent.TimeUnit;
 /**
  * Kafka consumer for {@code payment.events}.
  *
- * Immutable constraints enforced here:
- * - Returns {@code void} — Spring Kafka silently ignores Mono/Flux return types.
- * - Rate limiter acquisition inside lane task, not on this consumer thread (ADR-03).
- * - {@code publishOn(laneScheduler)} is enforced in RedisGate — not repeated here.
- * - Kafka offset is committed after Redis gate + outbox submit; never waits for Postgres.
- *
- * <b>Error-handling model — two distinct surfaces:</b>
+ * <p>Constraints enforced here:
  * <ul>
- *   <li><b>Listener thread</b> (this class's {@code consume}): deserialization failures are
- *       thrown by the container before the listener runs; validation failures are thrown
- *       here. Both propagate to {@code DefaultErrorHandler} → DLT (not-retryable).
- *   <li><b>Lane task</b> ({@code processEvent}): exceptions can NEVER reach the error
- *       handler — the listener already returned. The lane publishes to DLT itself via
- *       {@code DeadLetterPublishingRecoverer} and acks. A failure here must never be a
- *       silent drop: every terminal path is DLT + ack, buffer (CB open), or no-ack
- *       (DLT publish itself failed → redelivery after rebalance/restart).
+ *   <li>Listener returns {@code void}; Spring Kafka silently ignores Mono/Flux.</li>
+ *   <li>Rate limiting runs inside the lane task, never on the consumer thread (ADR-03).</li>
+ *   <li>{@code publishOn(laneScheduler)} is enforced in {@link RedisGate}, not repeated here.</li>
+ *   <li>Offset is committed after Redis gate + outbox enqueue; never waits for Postgres.</li>
+ * </ul>
+ *
+ * <p>Two error-handling surfaces:
+ * <ul>
+ *   <li><b>Listener thread</b> ({@link #consume}): validation failures throw to
+ *       {@code DefaultErrorHandler} → DLT (not-retryable).</li>
+ *   <li><b>Lane task</b> ({@link #processEvent}): exceptions cannot reach the error handler.
+ *       The lane publishes to the DLT itself. Every terminal path is DLT + ack, CB buffer,
+ *       or no-ack (DLT publish failed → redelivery); never a silent drop.</li>
  * </ul>
  */
 @Component
@@ -74,30 +75,39 @@ public class PaymentEventConsumer implements ConsumerSeekAware {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentEventConsumer.class);
 
-    /** Bounded in-lane retries for transient gate errors; CB-open and contract violations excluded. */
+    /**
+     * Total time budget for draining revoked lanes.
+     */
+    private static final long DRAIN_BUDGET_MS = 5_000;
+
+    /**
+     * Stamped by deploy/kafka/dlt-redrive.sh on every re-driven record (ADR-23).
+     */
+    private static final String REDRIVE_ATTEMPTS_HEADER = "x-redrive-attempts";
+
+    /**
+     * Bounded in-lane retries for transient gate errors; CB-open and contract violations excluded.
+     */
     private static final Retry GATE_RETRY = Retry
             .backoff(2, Duration.ofMillis(100))
             .filter(t -> !(t instanceof CallNotPermittedException)
-                      && !(t instanceof GateContractViolation));
+                    && !(t instanceof GateContractViolation));
 
-    private final RpeProperties             props;
-    private final LaneExecutorService       laneExecutorService;
-    private final RateLimiterService        rateLimiterService;
-    private final RedisGate                 redisGate;
-    private final List<Detector>            detectors;
-    private final OutboxBatchWriter         outboxBatchWriter;
-    private final CbFallbackHandler         cbFallbackHandler;
-    private final ObjectMapper              objectMapper;
-    private final Scheduler                 jdbcScheduler;
-    private final Validator                 validator;
+    private final RpeProperties props;
+    private final LaneExecutorService laneExecutorService;
+    private final RateLimiterService rateLimiterService;
+    private final RedisGate redisGate;
+    private final List<Detector> detectors;
+    private final OutboxBatchWriter outboxBatchWriter;
+    private final CbFallbackHandler cbFallbackHandler;
+    private final ObjectMapper objectMapper;
+    private final Scheduler jdbcScheduler;
+    private final Validator validator;
     private final DeadLetterPublishingRecoverer dltRecoverer;
-    private final MeterRegistry             meterRegistry;
-    private final TraceContextWriter        traceContextWriter;
+    private final MeterRegistry meterRegistry;
+    private final TraceContextWriter traceContextWriter;
 
-    // Partition → account_id index for partition-scoped lane drain on rebalance (ADR-09).
-    // Bounded to the lane cache: PaymentEventConsumer registers pruneAccountFromIndex as the
-    // lane eviction listener (see init()), so an account leaves the index the moment its lane
-    // is evicted — the index can never outgrow LaneExecutorService's bounded Caffeine cache.
+    // Partition → account index for partition-scoped drain (ADR-09); pruned on lane eviction
     private final ConcurrentHashMap<TopicPartition, Set<String>> partitionAccountIndex =
             new ConcurrentHashMap<>();
 
@@ -115,25 +125,24 @@ public class PaymentEventConsumer implements ConsumerSeekAware {
             DeadLetterPublishingRecoverer dltRecoverer,
             MeterRegistry meterRegistry,
             TraceContextWriter traceContextWriter) {
-        this.props               = props;
+        this.props = props;
         this.laneExecutorService = laneExecutorService;
-        this.rateLimiterService  = rateLimiterService;
-        this.redisGate           = redisGate;
-        this.detectors           = detectors;
-        this.outboxBatchWriter   = outboxBatchWriter;
-        this.cbFallbackHandler   = cbFallbackHandler;
-        this.objectMapper        = objectMapper;
-        this.jdbcScheduler       = jdbcScheduler;
-        this.validator           = validator;
-        this.dltRecoverer        = dltRecoverer;
-        this.meterRegistry       = meterRegistry;
-        this.traceContextWriter  = traceContextWriter;
+        this.rateLimiterService = rateLimiterService;
+        this.redisGate = redisGate;
+        this.detectors = detectors;
+        this.outboxBatchWriter = outboxBatchWriter;
+        this.cbFallbackHandler = cbFallbackHandler;
+        this.objectMapper = objectMapper;
+        this.jdbcScheduler = jdbcScheduler;
+        this.validator = validator;
+        this.dltRecoverer = dltRecoverer;
+        this.meterRegistry = meterRegistry;
+        this.traceContextWriter = traceContextWriter;
     }
 
     /**
-     * Bind index pruning to lane eviction so {@link #partitionAccountIndex} stays bounded by
-     * the lane cache. Registered post-construction to avoid leaking {@code this} from the
-     * constructor.
+     * Binds index pruning to lane eviction so the partition index stays bounded by the
+     * lane cache. Registered post-construction to avoid leaking {@code this}.
      */
     @PostConstruct
     void init() {
@@ -141,10 +150,10 @@ public class PaymentEventConsumer implements ConsumerSeekAware {
     }
 
     /**
-     * Removes an evicted account from the partition index. An account belongs to at most one
-     * partition's set, and only the partitions assigned to this instance are present, so the
-     * scan is over a handful of small sets — cheaper than maintaining a second reverse map
-     * that would itself need bounding. Runs on a Caffeine maintenance thread; must not throw.
+     * Removes an evicted account from the partition index. Runs on a Caffeine maintenance
+     * thread; must not throw.
+     *
+     * @param accountId evicted account id
      */
     private void pruneAccountFromIndex(String accountId) {
         for (Set<String> accounts : partitionAccountIndex.values()) {
@@ -153,71 +162,71 @@ public class PaymentEventConsumer implements ConsumerSeekAware {
     }
 
     /**
-     * Entry point for each payment event. Returns {@code void} — mandatory constraint.
-     * Never return Mono/Flux: Spring Kafka silently ignores reactive return types.
+     * Entry point per payment event. Must return {@code void}.
+     *
+     * @param consumerRecord record from {@code payment.events}
+     * @param ack            manual acknowledgment, committed by the lane task
      */
     @KafkaListener(
-            id           = "payment-consumer",
+            id = "payment-consumer",
             groupId = "rpe-payment-consumer",
-            topics       = "payment.events",
+            topics = "payment.events",
             containerFactory = "paymentListenerContainerFactory"
     )
-    public void consume(ConsumerRecord<String, PaymentEvent> record, Acknowledgment ack) {
-        if (record.value() == null) {
-            // Tombstone (null payload, no deserialization-exception header). Records that
-            // FAILED deserialization are thrown by the container before the listener runs
-            // and never arrive here.
-            log.debug("Skipping tombstone record at offset {}", record.offset());
+    public void consume(ConsumerRecord<String, PaymentEvent> consumerRecord, Acknowledgment ack) {
+        if (consumerRecord.value() == null) {
+            // Tombstone; failed deserialization never reaches the listener
+            log.debug("Skipping tombstone record at offset {}", consumerRecord.offset());
             ack.acknowledge();
             return;
         }
 
-        PaymentEvent event = record.value();
+        PaymentEvent event = consumerRecord.value();
 
-        // Validate at the ingestion boundary, ON THE LISTENER THREAD — the throw must
-        // propagate to DefaultErrorHandler (not-retryable → DLT). @Valid on @KafkaListener
-        // params does not auto-trigger; Bean Validation requires explicit invocation.
+        // Explicit call required: @Valid on @KafkaListener params does not trigger.
+        // Throw on the listener thread so DefaultErrorHandler routes to DLT.
         Set<ConstraintViolation<PaymentEvent>> violations = validator.validate(event);
         if (!violations.isEmpty()) {
-            log.warn("Malformed event for account=...{}: {} constraint violation(s) — routing to DLT",
-                    Pii.maskAccountId(event.accountId()), violations.size());
+            if (log.isWarnEnabled()) { // skip eager masking when WARN is off
+                log.warn("Malformed event for account=...{}: {} constraint violation(s) — routing to DLT",
+                        Pii.maskAccountId(event.accountId()), violations.size());
+            }
             throw new EventValidationException(violations.size());
         }
 
-        TopicPartition partition = new TopicPartition(record.topic(), record.partition());
-
-        // Maintain partition → account index for rebalance drain (ADR-09)
+        TopicPartition partition = new TopicPartition(consumerRecord.topic(), consumerRecord.partition());
         partitionAccountIndex
                 .computeIfAbsent(partition, k -> ConcurrentHashMap.newKeySet())
                 .add(event.accountId());
 
-        // Capture the consume-span trace context HERE, on the listener thread where it is the
-        // active context (ADR-25). It cannot be read on the lane VT: the lane is a raw executor,
-        // so the ThreadLocal trace context does not survive lane.submit(). Thread it explicitly.
+        // Capture here: ThreadLocal trace context does not survive lane submit (ADR-25)
         TraceCarrier trace = traceContextWriter.capture();
-        Runnable task = () -> processEvent(record, ack, trace);
+        Runnable task = () -> processEvent(consumerRecord, ack, trace);
 
-        // Single routing decision (lane vs CB buffer) lives in the handler — the previous
-        // read-state-then-act switch here could interleave with the drain's NORMAL flip and
-        // strand a buffered task until the next CB cycle (EADIE audit).
+        // Single lane-vs-buffer routing decision lives in the handler (EADIE audit)
         cbFallbackHandler.dispatch(event.accountId(), task);
     }
 
     /**
-     * Runs on the per-account lane virtual thread. Every terminal path either acks
-     * (processed, or published to DLT), buffers (CB open), or leaves the offset
-     * uncommitted (DLT publish failed) — never a silent drop.
+     * Per-account lane task: rate limit → Redis gate → detectors → ack. Every terminal path
+     * acks (processed or DLT'd), buffers (CB open), or leaves the offset uncommitted
+     * (DLT publish failed).
+     *
+     * @param consumerRecord record being processed
+     * @param ack            manual acknowledgment
+     * @param trace          trace context captured on the listener thread
      */
     @BoundaryHandler("kafka-listener-top-level: any processing failure must reach the DLT, never a silent drop (ADR-02)")
-    private void processEvent(ConsumerRecord<String, PaymentEvent> record, Acknowledgment ack, TraceCarrier trace) {
-        PaymentEvent event = record.value();
-        long brokerIngestMs = record.timestamp();
+    private void processEvent(ConsumerRecord<String, PaymentEvent> consumerRecord,
+                              Acknowledgment ack,
+                              TraceCarrier trace) {
+        PaymentEvent event = consumerRecord.value();
+        long brokerIngestMs = consumerRecord.timestamp();
         String maskedAccount = Pii.maskAccountId(event.accountId());
         MDC.put("event_id", Pii.maskEventId(event.eventId()));
         MDC.put("account_id", maskedAccount);
         try {
-            // Rate limit check inside lane — never on consumer thread (ADR-03).
-            // Sustained 5s breach = adversarial/misconfigured upstream → DLT per spec.
+            // Inside the lane, never on the consumer thread (ADR-03)
             if (!rateLimiterService.tryAcquire(event.accountId())) {
                 throw new RejectedExecutionException("rate limit sustained breach");
             }
@@ -236,20 +245,12 @@ public class PaymentEventConsumer implements ConsumerSeekAware {
             ).retryWhen(GATE_RETRY).block();
 
             if (result == null) {
-                // Script returned no reply — a contract violation, not a transient error
+                // No script reply: contract violation, not transient
                 throw new GateContractViolation(Pii.maskEventId(event.eventId()), "shape", null);
             }
 
             if (result.dedupBlocked()) {
-                // A RE-DRIVEN record is dedup-blocked by design: post-gate failures reach the
-                // DLT with the dedup key already marked (gate step 4 runs first). If the DLT
-                // record carries a reconstructable outcome, re-emit the alert instead of
-                // silently acking it away (EADIE audit GAP-3).
-                if (handleRedrivenDuplicate(record, ack, trace)) {
-                    return;
-                }
-                log.debug("Dedup blocked duplicate event (account=...{})", maskedAccount);
-                ack.acknowledge();
+                ackDuplicate(consumerRecord, ack, trace, maskedAccount);
                 return;
             }
 
@@ -265,44 +266,36 @@ public class PaymentEventConsumer implements ConsumerSeekAware {
                 if (dr.isAlert()) {
                     firing = dr;
                     alertDurable = submitAlert(event, dr, trace);
-                    break; // first firing rule wins; alert_id is deterministic per rule
+                    break; // first firing rule wins; alert_id deterministic per rule
                 }
             }
 
             if (alertDurable) {
-                // Hot path done — ack after Redis + a successful outbox enqueue.
-                ack.acknowledge();
+                ack.acknowledge(); // after Redis gate + successful outbox enqueue
             } else {
-                // Outbox saturated (Postgres backpressure): the alert was NOT durably enqueued.
-                // Preserve the event on the DLT — WITH the detection outcome as headers, because
-                // the dedup key is already marked: a re-drive is dedup-blocked and cannot re-run
-                // the detectors, so without the outcome the alert would be lost on re-drive. The
-                // headers make the record self-sufficient (see handleRedrivenDuplicate).
+                // Outbox saturated and dedup key already marked: a re-drive cannot re-run
+                // detectors, so the outcome travels as DLT headers (see handleRedrivenDuplicate)
                 log.error("Alert outbox saturated for account=...{} — routing event to DLT with "
                         + "reconstructable outcome headers", maskedAccount);
-                publishToDltAndAck(record,
+                publishToDltAndAck(consumerRecord,
                         new AlertNotDurableException(firing.ruleName(), firing.reason()), ack);
             }
 
         } catch (CallNotPermittedException e) {
-            // CB just opened; hold the event for replay when the CB recovers (ADR-02).
-            // Offset stays unacknowledged — with asyncAcks the gap holds the partition
-            // watermark, so buffer loss on crash is genuinely not data loss.
-            cbFallbackHandler.dispatch(event.accountId(), () -> processEvent(record, ack, trace));
+            // CB opened: buffer for replay; offset stays unacked, so crash is not data loss (ADR-02)
+            cbFallbackHandler.dispatch(event.accountId(), () -> processEvent(consumerRecord, ack, trace));
         } catch (GateContractViolation e) {
-            // Pre-reported at the RedisGate catch site (counter incremented there).
-            // Deterministic per event — DLT without retry; debug only, no double emission.
+            // Counter already incremented at the RedisGate catch site; deterministic → DLT
             log.debug("Gate contract violation routed to DLT: {}", e.getMessage());
-            publishToDltAndAck(record, e, ack);
+            publishToDltAndAck(consumerRecord, e, ack);
         } catch (RejectedExecutionException e) {
-            // Sustained rate-limit breach — already WARN-logged by RateLimiterService
-            publishToDltAndAck(record, e, ack);
+            // Already WARN-logged by RateLimiterService
+            publishToDltAndAck(consumerRecord, e, ack);
         } catch (Exception e) {
-            // Transient retries exhausted (or unexpected failure). Never silently drop:
-            // route to DLT so the event is preserved for replay/inspection.
+            // Retries exhausted or unexpected failure: preserve on DLT, never drop
             log.error("Processing failed for account=...{} after retries — routing to DLT: {}",
                     maskedAccount, e.getMessage(), e);
-            publishToDltAndAck(record, e, ack);
+            publishToDltAndAck(consumerRecord, e, ack);
         } finally {
             MDC.remove("event_id");
             MDC.remove("account_id");
@@ -310,60 +303,74 @@ public class PaymentEventConsumer implements ConsumerSeekAware {
     }
 
     /**
-     * Lane-side DLT publication. Acks ONLY if the DLT publish succeeded — if Kafka itself
-     * is unavailable, the offset stays uncommitted and the event is redelivered after a
-     * rebalance/restart instead of vanishing.
+     * Acks a dedup-blocked event. Re-driven records are re-emitted from DLT headers instead.
+     *
+     * @param consumerRecord the dedup-blocked record
+     * @param ack            manual acknowledgment
+     * @param trace          trace context captured on the listener thread
+     * @param maskedAccount  masked account id for logging
+     */
+    private void ackDuplicate(ConsumerRecord<String, PaymentEvent> consumerRecord, Acknowledgment ack,
+                              TraceCarrier trace, String maskedAccount) {
+        // Re-driven records are dedup-blocked by design (EADIE GAP-3)
+        if (handleRedrivenDuplicate(consumerRecord, ack, trace)) {
+            return;
+        }
+        log.debug("Dedup blocked duplicate event (account=...{})", maskedAccount);
+        ack.acknowledge();
+    }
+
+    /**
+     * Lane-side DLT publication. Acks only if the publish succeeded; on Kafka failure the
+     * offset stays uncommitted and the event is redelivered.
+     *
+     * @param consumerRecord record to dead-letter
+     * @param cause          failure that triggered dead-lettering
+     * @param ack            manual acknowledgment
      */
     @BoundaryHandler("kafka-listener-DLT-publish: ack only if DLT publish succeeded; on Kafka failure leaves the offset uncommitted for redelivery")
     private void publishToDltAndAck(
-            ConsumerRecord<String, PaymentEvent> record, Exception cause, Acknowledgment ack) {
+            ConsumerRecord<String, PaymentEvent> consumerRecord, Exception cause, Acknowledgment ack) {
         try {
-            // Blocks until the send is confirmed: the recoverer is configured (and, in
-            // spring-kafka 4.1.0, already defaults) to failIfSendResultIsError(true) + a bounded
-            // waitForSendResultTimeout (KafkaConfig pins both). So a failed DLT publish throws here
-            // rather than letting the ack below commit an offset for a record that never landed.
-            dltRecoverer.accept(record, cause);
+            // Blocks until confirmed: recoverer pinned to failIfSendResultIsError + bounded
+            // waitForSendResultTimeout (KafkaConfig), so a failed publish throws before the ack
+            dltRecoverer.accept(consumerRecord, cause);
             ack.acknowledge();
         } catch (Exception dltFailure) {
             meterRegistry.counter("rpe.dlt.publish.failed").increment();
             log.error("DLT publish failed — offset left uncommitted for redelivery (partition={}, offset={})",
-                    record.partition(), record.offset(), dltFailure);
+                    consumerRecord.partition(), consumerRecord.offset(), dltFailure);
         }
     }
 
-    /** Stamped by deploy/kafka/dlt-redrive.sh on every re-driven record (ADR-23). */
-    private static final String REDRIVE_ATTEMPTS_HEADER = "x-redrive-attempts";
-
     /**
-     * Recovery path for re-driven post-gate DLT records (EADIE audit GAP-3). Such records are
-     * dedup-blocked (the gate marked dedup before the original failure), so the detectors can
-     * never re-run for them — the DLT record's own outcome headers are the only source of truth.
-     *
+     * Recovers a re-driven, dedup-blocked DLT record from its outcome headers (EADIE GAP-3).
+     * Detectors cannot re-run because the gate already marked dedup.
      * <ul>
-     *   <li>Outcome {@code ALERT_UNDURABLE} + rule header: the original firing is reconstructed
-     *       deterministically — same {@code UUIDv5(eventId + ":" + rule)} alert_id — and submitted
-     *       straight to the outbox. No gate re-run, no velocity/Welford/geo pollution;
-     *       {@code processed_alerts ON CONFLICT} absorbs the duplicate if the original intent DID
-     *       reach Postgres. If the outbox is still saturated, back to the DLT (headers re-stamped).
-     *   <li>Re-driven but no reconstructable outcome (post-gate failure of unknown verdict):
-     *       fail-visible — back to the DLT so the re-drive attempt cap parks it for operator
-     *       decision (ADR-23), never a silent ack that pretends the record was handled.
+     *   <li>{@code ALERT_UNDURABLE} + rule: rebuilds the alert (same UUIDv5 id) and submits it
+     *       to the outbox; {@code processed_alerts ON CONFLICT} absorbs duplicates. If the
+     *       outbox is still saturated, the record returns to the DLT.</li>
+     *   <li>No reconstructable outcome: returns to the DLT so the attempt cap parks it for
+     *       operator decision (ADR-23); never a silent ack.</li>
      * </ul>
      *
-     * @return {@code true} if this record was a re-drive and has been fully handled (acked or
-     *         re-routed); {@code false} for an ordinary duplicate — caller acks as before.
+     * @param consumerRecord candidate re-driven record
+     * @param ack            manual acknowledgment
+     * @param trace          trace context captured on the listener thread
+     * @return {@code true} if the record was a re-drive and is fully handled;
+     * {@code false} for an ordinary duplicate, which the caller acks
      */
     private boolean handleRedrivenDuplicate(
-            ConsumerRecord<String, PaymentEvent> record, Acknowledgment ack, TraceCarrier trace) {
-        if (record.headers().lastHeader(REDRIVE_ATTEMPTS_HEADER) == null) {
-            return false;   // not a re-drive — an ordinary at-least-once duplicate
+            ConsumerRecord<String, PaymentEvent> consumerRecord, Acknowledgment ack, TraceCarrier trace) {
+        if (consumerRecord.headers().lastHeader(REDRIVE_ATTEMPTS_HEADER) == null) {
+            return false; // ordinary at-least-once duplicate
         }
-        PaymentEvent event = record.value();
-        String outcome = headerValue(record, AlertNotDurableException.OUTCOME_HEADER);
-        String rule    = headerValue(record, AlertNotDurableException.RULE_HEADER);
+        PaymentEvent event = consumerRecord.value();
+        String outcome = headerValue(consumerRecord, AlertNotDurableException.OUTCOME_HEADER);
+        String rule = headerValue(consumerRecord, AlertNotDurableException.RULE_HEADER);
 
         if (AlertNotDurableException.OUTCOME_ALERT_UNDURABLE.equals(outcome) && rule != null) {
-            String reason = headerValue(record, AlertNotDurableException.REASON_HEADER);
+            String reason = headerValue(consumerRecord, AlertNotDurableException.REASON_HEADER);
             DetectionResult dr = DetectionResult.alert(
                     rule, reason != null ? reason : "reconstructed-from-redrive");
             boolean durable = submitAlert(event, dr, trace);
@@ -373,31 +380,39 @@ public class PaymentEventConsumer implements ConsumerSeekAware {
                 log.info("Re-driven event reconstructed alert rule={} (dedup-blocked re-run)", rule);
                 ack.acknowledge();
             } else {
-                publishToDltAndAck(record, new AlertNotDurableException(rule, reason), ack);
+                publishToDltAndAck(consumerRecord, new AlertNotDurableException(rule, reason), ack);
             }
             return true;
         }
 
-        // Re-driven, dedup-blocked, no reconstructable outcome: detection cannot be repeated
-        // (state already mutated; within TTL detectors are skipped, past TTL the window moved).
-        // Loud + parked beats silent: the script's attempt cap routes it to <dlt>.parked.
+        // Detection cannot be repeated (state already mutated); fail visible, attempt cap parks it
         meterRegistry.counter("rpe.redrive.unrecoverable").increment();
         log.error("Re-driven event is dedup-blocked with no reconstructable outcome — returning "
                 + "to DLT (attempt cap will park it) rather than silently acking");
-        publishToDltAndAck(record, new IllegalStateException(
+        publishToDltAndAck(consumerRecord, new IllegalStateException(
                 "re-driven record dedup-blocked with no reconstructable outcome"), ack);
         return true;
     }
 
-    private static String headerValue(ConsumerRecord<String, PaymentEvent> record, String name) {
-        var header = record.headers().lastHeader(name);
-        return header == null ? null : new String(header.value(), java.nio.charset.StandardCharsets.UTF_8);
+    /**
+     * @param consumerRecord record whose headers are read
+     * @param name           header name
+     * @return last header value as UTF-8, or {@code null} if absent
+     */
+    private static String headerValue(ConsumerRecord<String, PaymentEvent> consumerRecord, String name) {
+        var header = consumerRecord.headers().lastHeader(name);
+        return header == null ? null : new String(header.value(), StandardCharsets.UTF_8);
     }
 
     /**
-     * @return {@code true} if the alert intent was durably enqueued to the outbox; {@code false} if the
-     *         outbox queue is saturated (Postgres backpressure) — the caller then routes the event to the
-     *         DLT rather than acking a lost alert (arch-audit HIGH-1).
+     * Builds the alert intent and enqueues it to the outbox, parking the lane VT until the
+     * enqueue result is known.
+     *
+     * @param event source payment event
+     * @param dr    firing detection result
+     * @param trace trace context persisted with the intent (ADR-25)
+     * @return {@code true} if durably enqueued; {@code false} if the outbox is saturated
+     * (Postgres backpressure) and the caller must route the event to the DLT
      */
     private boolean submitAlert(PaymentEvent event, DetectionResult dr, TraceCarrier trace) {
         UUID alertId = UuidV5.generate(
@@ -411,9 +426,7 @@ public class PaymentEventConsumer implements ConsumerSeekAware {
                 dr.reason(),
                 event.timestamp());
 
-        // Persist the W3C trace context alongside the intent (ADR-25). The relay restores it as
-        // the remote parent when it publishes to payment.alerts, so the trace is continuous
-        // across the async outbox gap. NULL when no span was active — relay starts a fresh trace.
+        // Trace context persisted so the relay continues the trace across the outbox gap (ADR-25)
         AlertIntent intent = new AlertIntent(
                 alertId,
                 event.accountId(),
@@ -422,16 +435,11 @@ public class PaymentEventConsumer implements ConsumerSeekAware {
                 trace.traceparent(),
                 trace.tracestate());
 
-        // In-flight gap instrumentation: count the alert at the moment the hot path hands it
-        // to the outbox writer. The matching confirmation counter rpe.hotpath.alerts.buffered
-        // fires inside OutboxBatchWriter.submit once the intent is safely held in the volatile queue.
+        // Counts the hand-off; the matching buffered counter fires inside OutboxBatchWriter.submit
         meterRegistry.counter("rpe.hotpath.alerts.submitted").increment();
 
-        // Durability-gated (was fire-and-forget): the enqueue runs on jdbcScheduler (PgJDBC pins VT
-        // carriers — keep JDBC off the lane VT) and the lane VT parks on block() for the result. The
-        // offer is O(1) in steady state, so the ≤50ms ADR-12 crash window is unchanged; only a saturated
-        // queue blocks (bounded), and returns false so the caller preserves the event on the DLT instead
-        // of acking a dropped alert. A thrown enqueue propagates to processEvent's boundary catch → DLT.
+        // JDBC off the lane VT (PgJDBC pins carriers); lane parks on block(). Offer is O(1)
+        // in steady state (ADR-12 crash window unchanged); a thrown enqueue reaches the boundary catch.
         Boolean enqueued = Mono.fromCallable(() -> outboxBatchWriter.submit(intent))
                 .subscribeOn(jdbcScheduler)
                 .block();
@@ -442,15 +450,20 @@ public class PaymentEventConsumer implements ConsumerSeekAware {
         return false;
     }
 
-    // ── ConsumerSeekAware — partition-scoped lane drain on rebalance ──────────
+    // ── ConsumerSeekAware: partition-scoped lane drain on rebalance (ADR-09) ──
 
+    /**
+     * Drains only lanes for accounts on revoked partitions; draining all would stall active
+     * partitions. Shut-down lanes are invalidated so a re-assigned partition gets a fresh executor.
+     *
+     * @param partitions revoked partitions
+     */
     @Override
     public void onPartitionsRevoked(Collection<TopicPartition> partitions) {
-        // Drain ONLY lanes for accounts on revoked partitions — not all lanes.
-        // Draining all lanes would stall active partitions (ADR-09).
-        log.info("Partitions revoked: {}; draining affected lanes (5s bound)", partitions);
-        List<ExecutorService> lanesToDrain         = new ArrayList<>();
-        List<String>          accountsToInvalidate = new ArrayList<>();
+        log.info("Partitions revoked: {}; draining affected lanes ({}ms bound)",
+                partitions, DRAIN_BUDGET_MS);
+        List<ExecutorService> lanesToDrain = new ArrayList<>();
+        List<String> accountsToInvalidate = new ArrayList<>();
 
         for (TopicPartition tp : partitions) {
             Set<String> accounts = partitionAccountIndex.remove(tp);
@@ -463,31 +476,54 @@ public class PaymentEventConsumer implements ConsumerSeekAware {
             }
         }
 
-        long deadline = System.currentTimeMillis() + 5_000;
-        for (ExecutorService lane : lanesToDrain) {
-            long remaining = deadline - System.currentTimeMillis();
-            if (remaining <= 0) break;
-            try {
-                lane.awaitTermination(remaining, TimeUnit.MILLISECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
+        awaitLanes(lanesToDrain, DRAIN_BUDGET_MS);
 
-        // Invalidate shut-down lanes from Caffeine so a fresh executor is created if the
-        // partition is rebalanced back to this instance. Without invalidation, getOrCreate
-        // returns the dead executor forever: every submit is rejected (the bounded-blocking
-        // saturation policy throws on shut-down lanes), and from the listener that rejection
-        // reaches DefaultErrorHandler → DLT after retries — loss of valid events.
+        // Else getOrCreate returns the dead executor and valid events hit DLT after retries
         accountsToInvalidate.forEach(laneExecutorService::invalidate);
     }
 
-    @Override
-    public void onPartitionsAssigned(Map<TopicPartition, Long> assignments, ConsumerSeekCallback callback) {
-        // No seek on assignment — continue from committed offset
+    /**
+     * Awaits lane termination within one shared monotonic budget.
+     *
+     * @param lanes    shut-down lanes to await
+     * @param budgetMs total wait budget in milliseconds
+     */
+    private static void awaitLanes(List<ExecutorService> lanes, long budgetMs) {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
+        for (ExecutorService lane : lanes) {
+            if (!awaitLane(lane, deadline)) {
+                break; // budget spent, timed out, or interrupted
+            }
+        }
+    }
+
+    /**
+     * @param lane          shut-down lane to await
+     * @param deadlineNanos absolute {@link System#nanoTime()} deadline
+     * @return {@code true} if the lane terminated in time; {@code false} on timeout,
+     * spent budget or interrupt (flag restored)
+     */
+    private static boolean awaitLane(ExecutorService lane, long deadlineNanos) {
+        long remaining = deadlineNanos - System.nanoTime();
+        if (remaining <= 0) {
+            return false;
+        }
+        try {
+            return lane.awaitTermination(remaining, TimeUnit.NANOSECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt(); // restore flag
+            return false;
+        }
     }
 
     @Override
-    public void registerSeekCallback(ConsumerSeekCallback callback) {}
+    public void onPartitionsAssigned(@NonNull Map<TopicPartition, Long> assignments,
+                                     @NonNull ConsumerSeekCallback callback) {
+        // No-op: resume from committed offset
+    }
+
+    @Override
+    public void registerSeekCallback(@NonNull ConsumerSeekCallback callback) {
+        // No-op: no seeks are issued; consumption resumes from committed offsets
+    }
 }

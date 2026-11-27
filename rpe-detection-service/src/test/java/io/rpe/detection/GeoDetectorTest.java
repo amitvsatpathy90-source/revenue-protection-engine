@@ -10,7 +10,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class GeoDetectorTest {
 
-    /** Hand-rolled stub — no Redis, no Mockito/Byte Buddy JVM-version coupling. */
+    /**
+     * Hand-rolled stub — no Redis, no Mockito/Byte Buddy JVM-version coupling.
+     */
     static final class StubClassification extends AccountClassificationService {
         boolean geoExempt = false;
 

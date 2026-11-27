@@ -14,6 +14,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.validation.Validator;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.internals.RecordHeader;
+import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -55,7 +56,7 @@ import static org.mockito.Mockito.when;
  * re-drive within the dedup TTL is therefore dedup-blocked, skips the detectors, and — pre-fix —
  * acked the event without ever re-emitting the alert that was firing when the failure hit. The
  * alert was lost silently despite the DLT "preserving" the event.
- *
+ * <p>
  * Post-fix contract: the DLT record carries the detection outcome as headers
  * ({@code x-rpe-outcome=ALERT_UNDURABLE}, {@code x-rpe-rule}, {@code x-rpe-reason}); on a
  * re-driven record ({@code x-redrive-attempts} present, stamped by dlt-redrive.sh) that is
@@ -73,15 +74,24 @@ class RedriveReconstructionTest {
     private static final String EVENT_ID = "evt-redrive-1";
     private static final String ACCOUNT = "A";
 
-    @Mock RpeProperties props;
-    @Mock LaneExecutorService laneExecutorService;
-    @Mock RateLimiterService rateLimiterService;
-    @Mock RedisGate redisGate;
-    @Mock OutboxBatchWriter outboxBatchWriter;
-    @Mock CbFallbackHandler cbFallbackHandler;
-    @Mock Validator validator;
-    @Mock DeadLetterPublishingRecoverer dltRecoverer;
-    @Mock io.rpe.observability.TraceContextWriter traceContextWriter;
+    @Mock
+    RpeProperties props;
+    @Mock
+    LaneExecutorService laneExecutorService;
+    @Mock
+    RateLimiterService rateLimiterService;
+    @Mock
+    RedisGate redisGate;
+    @Mock
+    OutboxBatchWriter outboxBatchWriter;
+    @Mock
+    CbFallbackHandler cbFallbackHandler;
+    @Mock
+    Validator validator;
+    @Mock
+    DeadLetterPublishingRecoverer dltRecoverer;
+    @Mock
+    io.rpe.observability.TraceContextWriter traceContextWriter;
 
     private PaymentEventConsumer consumer;
     private Acknowledgment ack;
@@ -120,8 +130,8 @@ class RedriveReconstructionTest {
         when(laneExecutorService.getOrCreate(ACCOUNT)).thenReturn(directExecutor());
     }
 
-    private ConsumerRecord<String, PaymentEvent> record(boolean redriven, String outcome,
-                                                        String rule, String reason) {
+    private ConsumerRecord<String, PaymentEvent> consumerRecord(boolean redriven, String outcome,
+                                                                String rule, String reason) {
         PaymentEvent event = new PaymentEvent(
                 EVENT_ID, ACCOUNT,
                 new BigDecimal("10.00"), new BigDecimal("1.0"), new BigDecimal("1.0"),
@@ -150,7 +160,7 @@ class RedriveReconstructionTest {
     void redrivenAlertUndurableRecordReconstructsTheAlertDespiteDedupBlock() {
         when(outboxBatchWriter.submit(any())).thenReturn(true);
 
-        consumer.consume(record(true, "ALERT_UNDURABLE",
+        consumer.consume(consumerRecord(true, "ALERT_UNDURABLE",
                 "velocity", "velocity: prior=100 >= max=100"), ack);
 
         ArgumentCaptor<AlertIntent> intent = ArgumentCaptor.forClass(AlertIntent.class);
@@ -166,7 +176,7 @@ class RedriveReconstructionTest {
 
     @Test
     void redrivenRecordWithoutReconstructableOutcomeGoesBackToDltNotSilentlyAcked() {
-        consumer.consume(record(true, null, null, null), ack);
+        consumer.consume(consumerRecord(true, null, null, null), ack);
 
         verify(outboxBatchWriter, never()).submit(any());
         // Fail-visible: back to the DLT so the re-drive attempt cap parks it (ADR-23) —
@@ -177,25 +187,57 @@ class RedriveReconstructionTest {
 
     @Test
     void ordinaryDuplicateWithoutRedriveHeadersStillAcksWithoutSideEffects() {
-        consumer.consume(record(false, null, null, null), ack);
+        consumer.consume(consumerRecord(false, null, null, null), ack);
 
         verify(outboxBatchWriter, never()).submit(any());
         verify(dltRecoverer, never()).accept(any(), any(Exception.class));
         verify(ack).acknowledge();
     }
 
-    /** Runs submitted tasks on the calling thread so assertions can be synchronous. */
+    /**
+     * Runs submitted tasks on the calling thread so assertions can be synchronous.
+     */
     private static ExecutorService directExecutor() {
         return new AbstractExecutorService() {
-            @Override public void execute(Runnable command) { command.run(); }
-            @Override public void shutdown() {}
-            @Override public List<Runnable> shutdownNow() { return new AbstractList<>() {
-                @Override public Runnable get(int index) { throw new IndexOutOfBoundsException(); }
-                @Override public int size() { return 0; }
-            }; }
-            @Override public boolean isShutdown() { return false; }
-            @Override public boolean isTerminated() { return false; }
-            @Override public boolean awaitTermination(long timeout, TimeUnit unit) { return true; }
+            @Override
+            public void execute(@NonNull Runnable command) {
+                command.run();
+            }
+
+            @Override
+            public void shutdown() {
+                // Intentionally empty: inline executor has no threads or queue to stop
+            }
+
+            @Override
+            public @NonNull List<Runnable> shutdownNow() {
+                return new AbstractList<>() {
+                    @Override
+                    public Runnable get(int index) {
+                        throw new IndexOutOfBoundsException();
+                    }
+
+                    @Override
+                    public int size() {
+                        return 0;
+                    }
+                };
+            }
+
+            @Override
+            public boolean isShutdown() {
+                return false;
+            }
+
+            @Override
+            public boolean isTerminated() {
+                return false;
+            }
+
+            @Override
+            public boolean awaitTermination(long timeout, @NonNull TimeUnit unit) {
+                return true;
+            }
         };
     }
 }

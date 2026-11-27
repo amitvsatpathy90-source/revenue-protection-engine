@@ -118,7 +118,7 @@ class OutboxBatchWriterTest {
      * lane queue filled, the listener parked, and the whole consumer stalled. Architecture Spec's contract
      * ("ack gated on a bounded O(1) enqueue — lane never waits for the Postgres write itself")
      * depends on this staying off-caller.
-     *
+     * <p>
      * Injection: a DataSource whose {@code getConnection()} blocks (stuck Postgres). With a
      * flush threshold of 1, the first {@code submit()} triggers a flush. The assertion is that
      * {@code submit()} STILL returns in O(1) time while the flush is blocked in JDBC on another
@@ -129,13 +129,14 @@ class OutboxBatchWriterTest {
     @Test
     void submitAtThresholdDoesNotBlockTheCallerOnTheJdbcFlush() throws Exception {
         CountDownLatch flushReachedJdbc = new CountDownLatch(1);
-        CountDownLatch releaseJdbc      = new CountDownLatch(1);
+        CountDownLatch releaseJdbc = new CountDownLatch(1);
 
         DataSource ds = mock(DataSource.class);
         when(ds.getConnection()).thenAnswer(inv -> {
-            flushReachedJdbc.countDown();                 // the flush got as far as JDBC…
-            releaseJdbc.await(5, TimeUnit.SECONDS);        // …then blocks, like a stuck Postgres
-            throw new SQLException("stuck postgres released");
+            flushReachedJdbc.countDown();                 // flush reached JDBC
+            // Result intentionally ignored: timeout only caps the simulated stuck Postgres
+            boolean released = releaseJdbc.await(5, TimeUnit.SECONDS);
+            throw new SQLException("stuck postgres released (released=" + released + ")");
         });
 
         MeterRegistry reg = new SimpleMeterRegistry();

@@ -1,5 +1,6 @@
-CREATE TABLE outbox (
-    id         UUID        PRIMARY KEY,
+CREATE TABLE outbox
+(
+    id         UUID PRIMARY KEY,
     account_id TEXT        NOT NULL,
     payload    JSONB       NOT NULL,
     status     TEXT        NOT NULL DEFAULT 'PENDING',

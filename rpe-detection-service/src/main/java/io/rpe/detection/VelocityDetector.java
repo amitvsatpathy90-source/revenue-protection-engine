@@ -27,11 +27,14 @@ public class VelocityDetector implements Detector {
     }
 
     @Override
-    public String ruleName() { return RULE_NAME; }
+    public String ruleName() {
+        return RULE_NAME;
+    }
 
     @Override
     public DetectionResult evaluate(LuaGateResult result, PaymentEvent event, long brokerIngestMs) {
         long max = props.detection().velocity().maxEvents();
+
         // velocityPriorCount = ZCOUNT BEFORE adding this event (sliding window, exclusive lower bound)
         if (result.velocityPriorCount() >= max) {
             return DetectionResult.alert(RULE_NAME,

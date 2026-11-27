@@ -22,45 +22,44 @@ import java.util.List;
 public class RedisGate {
 
     private final ReactiveStringRedisTemplate redis;
-    private final DefaultRedisScript<List> gateScript;
+    private final DefaultRedisScript<List<Object>> gateScript;
     private final Scheduler laneScheduler;
     private final CircuitBreaker circuitBreaker;
     private final Bulkhead bulkhead;
     private final MeterRegistry meterRegistry;
 
-    @SuppressWarnings("rawtypes")
     public RedisGate(
             ReactiveStringRedisTemplate redis,
-            DefaultRedisScript<List> gateScript,
+            DefaultRedisScript<List<Object>> gateScript,
             Scheduler laneScheduler,
             CircuitBreakerRegistry cbRegistry,
             BulkheadRegistry bulkheadRegistry,
             MeterRegistry meterRegistry) {
-        this.redis          = redis;
-        this.gateScript     = gateScript;
-        this.laneScheduler  = laneScheduler;
+        this.redis = redis;
+        this.gateScript = gateScript;
+        this.laneScheduler = laneScheduler;
         this.circuitBreaker = cbRegistry.circuitBreaker("redis");
-        this.bulkhead       = bulkheadRegistry.bulkhead("redis");
-        this.meterRegistry  = meterRegistry;
+        this.bulkhead = bulkheadRegistry.bulkhead("redis");
+        this.meterRegistry = meterRegistry;
     }
 
     /**
      * Executes the unified Lua gate atomically:
-     *   velocity → z-score → geo → dedup (step ordering is a correctness invariant).
+     * velocity → z-score → geo → dedup (step ordering is a correctness invariant).
      *
-     * The returned Mono executes non-blocking on the Lettuce I/O thread, then hops to
+     * <p>The returned Mono executes non-blocking on the Lettuce I/O thread, then hops to
      * {@code laneScheduler} via {@code publishOn} before the caller processes the result.
      *
-     * A reply that violates the gate contract (ADR-14) — partial geo state, out-of-range
+     * <p>A reply that violates the gate contract (ADR-14) — partial geo state, out-of-range
      * coordinates, malformed shape — fails the Mono with {@link GateContractViolation}.
      * The violation is deterministic per event: callers must route it to DLT without retry.
      * This catch site owns the {@code rpe.gate.invalid_state} counter increment; downstream
      * handlers treat the exception as pre-reported and log at debug only.
      *
-     * @param brokerIngestMs  {@code ConsumerRecord.timestamp()} — NOT the payload timestamp.
-     *                        Payload clocks drift; broker ingest time is authoritative for geo.
+     * @param brokerIngestMs {@code ConsumerRecord.timestamp()} — NOT the payload timestamp.
+     *                       Payload clocks drift; broker ingest time is authoritative for geo.
      */
-    @SuppressWarnings({"rawtypes", "unchecked"})
+    @SuppressWarnings("java:S107") // S107: params mirror frozen gate.lua ARGV layout
     public Mono<LuaGateResult> execute(
             String eventId, String accountId,
             BigDecimal amount, BigDecimal lat, BigDecimal lon,
@@ -69,11 +68,13 @@ public class RedisGate {
             int dedupTtlSeconds, long statsTtlMs) {
 
         List<String> keys = List.of(
-                "vel:"   + accountId,
+                "vel:" + accountId,
                 "stats:" + accountId,
-                "geo:"   + accountId,
+                "geo:" + accountId,
                 "dedup:" + eventId);
 
+        // ARGV[11] — appended last (additive; existing indexes frozen): sliding idle TTL
+        // for stats:{account} (ADR-27, supersedes ADR-10's no-TTL sub-decision).
         List<String> args = List.of(
                 eventId,
                 String.valueOf(brokerIngestMs),
@@ -85,18 +86,17 @@ public class RedisGate {
                 String.valueOf(geoTtlMs),
                 String.valueOf(welfordSampleCap),
                 String.valueOf(dedupTtlSeconds),
-                // ARGV[11] — appended last (additive; existing indexes frozen): sliding idle TTL
-                // for stats:{account} (ADR-27, supersedes ADR-10's no-TTL sub-decision).
                 String.valueOf(statsTtlMs));
 
+        // MANDATORY: hop off the Lettuce I/O thread BEFORE processing the result.
+
+        // A missing publishOn (or publishOn placed after map) is a silent deadlock
+        // risk: any downstream work executing on the Lettuce I/O thread can stall
+        // ALL other Redis operations sharing that event loop.
         return redis.execute(gateScript, keys, args)
                 .next()
-                // MANDATORY: hop off the Lettuce I/O thread BEFORE processing the result.
-                // A missing publishOn (or publishOn placed after map) is a silent deadlock
-                // risk: any downstream work executing on the Lettuce I/O thread can stall
-                // ALL other Redis operations sharing that event loop.
                 .publishOn(laneScheduler)
-                .map(raw -> mapReply((List<Object>) raw, eventId))
+                .map(raw -> mapReply(raw, eventId))
                 .transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
                 .transformDeferred(BulkheadOperator.of(bulkhead));
     }
@@ -113,6 +113,7 @@ public class RedisGate {
         } catch (RuntimeException e) {
             String reason = e instanceof IllegalArgumentException ? "geo" : "shape";
             meterRegistry.counter("rpe.gate.invalid_state", "reason", reason).increment();
+
             // eventId is already in MDC at the lane entry; the message carries the masked
             // id only. No log here — the counter is the signal and the DLT path reports.
             throw new GateContractViolation(Pii.maskEventId(eventId), reason, e);

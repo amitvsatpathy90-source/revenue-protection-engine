@@ -28,14 +28,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Pins the ADR-27 stats-key lifecycle against a real Redis.
- *
+ * <p>
  * ADR-10 left {@code stats:{account}} with no TTL — invisible to {@code volatile-lru}, so under
  * account churn the unevictable set grows until it squeezes out the TTL'd dedup/vel/geo working
  * set (silent detection decay) and terminally wedges Redis in noeviction write errors. ADR-27
  * supersedes that sub-decision with a sliding idle TTL refreshed by every gate execution. The
  * regression this test guards: someone removing the {@code PEXPIRE} from gate.lua step 2 (the
  * key would silently revert to immortal — nothing else fails).
- *
+ * <p>
  * Also pins the ADR-27 memory watermark: {@code RedisMemoryMetrics} populates the
  * {@code rpe.redis.*memory.bytes} gauges from a live INFO reply.
  */
@@ -57,7 +57,7 @@ class RedisStatsLifecycleIntegrationTest {
     private static RedisGate gate;
 
     @BeforeAll
-    @SuppressWarnings("rawtypes")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     static void setUp() {
         var cfg = new RedisStandaloneConfiguration(REDIS.getHost(), REDIS.getMappedPort(6379));
         connectionFactory = new LettuceConnectionFactory(cfg);
@@ -65,9 +65,10 @@ class RedisStatsLifecycleIntegrationTest {
         connectionFactory.start();
         redis = new ReactiveStringRedisTemplate(connectionFactory);
 
-        DefaultRedisScript<List> script = new DefaultRedisScript<>();
+        DefaultRedisScript<List<Object>> script = new DefaultRedisScript<>();
         script.setLocation(new ClassPathResource("lua/gate.lua"));
-        script.setResultType(List.class);
+        // Erased List.class cast to Class<List<Object>>; safe, Redis returns a list of objects
+        script.setResultType((Class<List<Object>>) (Class) List.class);
         gate = new RedisGate(redis, script, Schedulers.boundedElastic(),
                 CircuitBreakerRegistry.ofDefaults(), BulkheadRegistry.ofDefaults(),
                 new SimpleMeterRegistry());
@@ -82,8 +83,10 @@ class RedisStatsLifecycleIntegrationTest {
         return runGate(account, new BigDecimal("42.00"), 10_000);
     }
 
-    /** Sample cap is an ARGV parameter, so a tiny cap drives the past-cap regime in a few hundred
-     *  events instead of the 10,001 the production default would need. */
+    /**
+     * Sample cap is an ARGV parameter, so a tiny cap drives the past-cap regime in a few hundred
+     * events instead of the 10,001 the production default would need.
+     */
     private static LuaGateResult runGate(String account, BigDecimal amount, int welfordSampleCap) {
         return gate.execute(
                 UUID.randomUUID().toString(), account,
@@ -154,7 +157,7 @@ class RedisStatsLifecycleIntegrationTest {
                 .isEqualTo(events);
         assertThat(last.welfordM2())
                 .as("M2 must stay scaled to ~cap samples (~%d), not grow with n (~%d un-decayed). "
-                        + "An un-decayed M2 divided by the true n is the silent missed-alert path.",
+                                + "An un-decayed M2 divided by the true n is the silent missed-alert path.",
                         cap * 100, events * 100)
                 .isGreaterThan(0.0)
                 .isLessThan(15_000.0);

@@ -11,7 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Detector precedence is part of the {@code alert_id} contract (the atomic detection-gate discipline).
- *
+ * <p>
  * {@code PaymentEventConsumer} takes the FIRST firing detector in the injected {@code List<Detector>}
  * and its {@code ruleName} fixes the UUIDv5 {@code alert_id}. Spring orders an injected {@code List<T>}
  * with {@link AnnotationAwareOrderComparator} ({@code @Order}/{@code Ordered}); this test drives that

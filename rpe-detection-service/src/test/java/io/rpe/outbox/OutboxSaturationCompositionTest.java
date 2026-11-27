@@ -19,7 +19,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Pool wait then outbox wait, in that order, with the real pool and a real writer. */
+/**
+ * Pool wait then outbox wait, in that order, with the real pool and a real writer.
+ */
 class OutboxSaturationCompositionTest {
 
     private static final int POOL = 20, QUEUE = 500;

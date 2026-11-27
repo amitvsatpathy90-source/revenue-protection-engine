@@ -16,10 +16,10 @@ import java.util.concurrent.TimeUnit;
  * Classifies accounts as elevated or geo-exempt using Redis SETs, backed by a 60-second
  * Caffeine cache. The cache prevents a per-event Redis round-trip for classification.
  *
- * Redis keys are refreshed without a redeploy — cache TTL (60s) is the propagation lag.
+ * <p>Redis keys are refreshed without a redeploy — cache TTL (60s) is the propagation lag.
  * Caffeine provides a 60-second resilience window if Redis is unavailable.
  *
- * Geo exemption is never silent: the first lookup that classifies an account as exempt
+ * <p>Geo exemption is never silent: the first lookup that classifies an account as exempt
  * logs it (masked id), and {@code GeoDetector} increments a bounded skip counter (ADR-04).
  */
 @Service

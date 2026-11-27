@@ -6,7 +6,7 @@ package io.rpe.observability;
  * {@code traceparent} (trace-id + parent-span-id + flags) and {@code tracestate} (vendor state,
  * usually empty in a single-vendor OTel setup).
  *
- * Both fields are nullable: when tracing is disabled, no span is active, or the inbound event
+ * <p>Both fields are nullable: when tracing is disabled, no span is active, or the inbound event
  * carried no trace context, {@link #EMPTY} is used and the persisted outbox columns are NULL —
  * the relay then starts a fresh trace for that row (fail-open, never an error).
  */

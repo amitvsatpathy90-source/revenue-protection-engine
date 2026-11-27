@@ -27,20 +27,20 @@ import static org.mockito.Mockito.*;
  * Drives the real Redis CircuitBreaker through its transitions to lock down the C+D
  * fallback state machine (ADR-02): NORMAL → BUFFERING → PAUSED → DRAINING → NORMAL,
  * the pause/resume pairing, and the two race-hardening invariants from the EADIE audit:
- *
- *   1. a close event mid-drain must NOT flip NORMAL while the buffer is non-empty
- *      (the old CAS flipped early — new events overtook older buffered events for the
- *      same account, inverting per-account state-mutation order);
- *   2. a task dispatched around the drain-completion window must never strand in the
- *      buffer (the old listener-side read-state-then-act could offer into a buffer
- *      nothing would ever drain again).
- *
+ * <p>
+ * 1. a close event mid-drain must NOT flip NORMAL while the buffer is non-empty
+ * (the old CAS flipped early — new events overtook older buffered events for the
+ * same account, inverting per-account state-mutation order);
+ * 2. a task dispatched around the drain-completion window must never strand in the
+ * buffer (the old listener-side read-state-then-act could offer into a buffer
+ * nothing would ever drain again).
+ * <p>
  * NOTE: these tests force CB transitions manually. In production the OPEN→HALF_OPEN
  * transition fires only because application.yml sets
  * automaticTransitionFromOpenToHalfOpenEnabled — the fallback stops all traffic to the
  * open breaker, so the lazy default would never transition. That wiring is pinned
  * separately by RedisCircuitBreakerAutoTransitionTest.
- *
+ * <p>
  * INSPECTION-ONLY (finding #2, arch-audit 2026-07-16): the invariant "dispatch never holds
  * transitionLock across a lane submit" (the fix moved the raced-NORMAL submit OUTSIDE the lock)
  * has no automated test. Reaching that branch deterministically needs the state to flip to NORMAL
@@ -56,7 +56,9 @@ class CbFallbackHandlerTest {
     private MessageListenerContainer container;
     private LaneExecutorService lanes;
 
-    /** Runnables executed through a lane, in execution order. */
+    /**
+     * Runnables executed through a lane, in execution order.
+     */
     private final ConcurrentLinkedQueue<Runnable> laneExecutions = new ConcurrentLinkedQueue<>();
 
     @BeforeEach
@@ -79,7 +81,9 @@ class CbFallbackHandlerTest {
         handler = new CbFallbackHandler(props, lanes, listenerRegistry, registry, new SimpleMeterRegistry());
     }
 
-    /** Lane whose submit executes immediately on the caller and records the execution. */
+    /**
+     * Lane whose submit executes immediately on the caller and records the execution.
+     */
     private ExecutorService recordingLane() {
         ExecutorService lane = mock(ExecutorService.class);
         doAnswer(inv -> {
@@ -118,11 +122,14 @@ class CbFallbackHandlerTest {
     void bufferFullTransitionsToPausedAndPausesConsumer() {
         cb.transitionToOpenState(); // → BUFFERING
 
-        handler.dispatch("a1", () -> {});
-        handler.dispatch("a2", () -> {});
+        handler.dispatch("a1", () -> {
+        });
+        handler.dispatch("a2", () -> {
+        });
         assertThat(handler.currentState()).isEqualTo(CbFallbackHandler.State.BUFFERING);
 
-        handler.dispatch("a3", () -> {}); // buffer full → PAUSED
+        handler.dispatch("a3", () -> {
+        }); // buffer full → PAUSED
 
         assertThat(handler.currentState()).isEqualTo(CbFallbackHandler.State.PAUSED);
         verify(container, atLeastOnce()).pause();
@@ -165,16 +172,17 @@ class CbFallbackHandlerTest {
     }
 
     /**
-     * EADIE invariant 1: HALF_OPEN_TO_CLOSED arriving while the drain is mid-flight (buffer
+     * Invariant 1: HALF_OPEN_TO_CLOSED arriving while the drain is mid-flight (buffer
      * still non-empty) must NOT flip NORMAL — the drain thread is the sole owner of that
-     * transition and flips only once the buffer is observed empty under the lock. The old
-     * implementation CAS'd DRAINING→NORMAL directly from the close event and resumed the
+     * transition and flips only once the buffer is observed empty under the lock.
+     * <p>
+     * The old implementation CAS'd DRAINING→NORMAL directly from the close event and resumed the
      * consumer over a non-empty buffer.
      */
     @Test
     void closeEventMidDrainDoesNotFlipNormalWhileBufferNonEmpty() throws Exception {
-        CountDownLatch laneBlocked  = new CountDownLatch(1);
-        CountDownLatch releaseLane  = new CountDownLatch(1);
+        CountDownLatch laneBlocked = new CountDownLatch(1);
+        CountDownLatch releaseLane = new CountDownLatch(1);
 
         ExecutorService blockingLane = mock(ExecutorService.class);
         doAnswer(inv -> {
@@ -187,19 +195,25 @@ class CbFallbackHandlerTest {
         when(lanes.getOrCreate(anyString())).thenReturn(blockingLane);
 
         cb.transitionToOpenState();               // → BUFFERING
-        handler.dispatch("a1", () -> {});
-        handler.dispatch("a2", () -> {});
+        handler.dispatch("a1", () -> {
+        });
+        handler.dispatch("a2", () -> {
+        });
         cb.transitionToHalfOpenState();           // → DRAINING; drain blocks in lane submit of a1
 
         assertThat(laneBlocked.await(5, TimeUnit.SECONDS)).isTrue();
         cb.transitionToClosedState();             // close lands MID-DRAIN, buffer still holds a2
 
-        // The old code flipped NORMAL + resumed right here. The fix must hold DRAINING.
-        Thread.sleep(300);
-        assertThat(handler.currentState())
-                .as("close mid-drain must not flip NORMAL while buffered tasks remain")
-                .isEqualTo(CbFallbackHandler.State.DRAINING);
-        verify(container, never()).resume();
+        // State must hold DRAINING on every poll across the window
+        Awaitility.await()
+                .during(Duration.ofMillis(300))
+                .atMost(Duration.ofSeconds(2))
+                .untilAsserted(() -> {
+                    assertThat(handler.currentState())
+                            .as("close mid-drain must not flip NORMAL while buffered tasks remain")
+                            .isEqualTo(CbFallbackHandler.State.DRAINING);
+                    verify(container, never()).resume();
+                });
 
         releaseLane.countDown();                  // let the drain finish a1, then a2
 
@@ -211,17 +225,18 @@ class CbFallbackHandlerTest {
     }
 
     /**
-     * EADIE invariant 2: a task dispatched while the drain completes is either drained or
+     * Invariant 2: a task dispatched while the drain completes is either drained or
      * takes the lane path after the flip — never stranded in a buffer nothing will empty.
-     * (The old listener-side read-state-then-act switch could offer into the buffer after
-     * the drain's final poll; the task then waited for a next CB cycle that may never come.)
+     * <p>
+     * The old listener-side read-state-then-act switch could offer into the buffer after
+     * the drain's final poll; the task then waited for a next CB cycle that may never come.
      */
     @Test
     void dispatchAcrossDrainCompletionIsNeverStranded() {
         ExecutorService lane = recordingLane();
         when(lanes.getOrCreate(anyString())).thenReturn(lane);
         AtomicBoolean before = new AtomicBoolean();
-        AtomicBoolean after  = new AtomicBoolean();
+        AtomicBoolean after = new AtomicBoolean();
 
         cb.transitionToOpenState();
         handler.dispatch("a1", () -> before.set(true));   // buffered

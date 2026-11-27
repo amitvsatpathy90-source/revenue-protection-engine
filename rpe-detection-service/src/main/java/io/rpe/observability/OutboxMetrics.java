@@ -12,33 +12,36 @@ import reactor.core.scheduler.Scheduler;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Publishes outbox health metrics to Micrometer → Prometheus.
  *
- * {@code rpe.outbox.pending.count} — number of PENDING rows in outbox.
+ * <p>{@code rpe.outbox.pending.count} — number of PENDING rows in outbox.
  * {@code rpe.outbox.pending.age_seconds} — age of oldest PENDING row (seconds).
  *
- * Log WARN thresholds (relay health signals):
- *   pending.count > 100 OR pending.age_seconds > 30 indicate a stuck relay.
- *   A stuck relay is invisible without these signals; you discover it when alerts stop arriving.
+ * <p>Log WARN thresholds (relay health signals):
+ * <ul>
+ *   <li>{@code pending.count > 100} OR {@code pending.age_seconds > 30} indicate a stuck relay.
+ *   <li>A stuck relay is invisible without these signals; you discover it when alerts stop arriving.
+ * </ul>
  */
 @Component
 public class OutboxMetrics {
 
     private static final Logger log = LoggerFactory.getLogger(OutboxMetrics.class);
 
-    private final DataSource    dataSource;
-    private final Scheduler     jdbcScheduler;
+    private final DataSource dataSource;
+    private final Scheduler jdbcScheduler;
     private final MeterRegistry meterRegistry;
 
-    private final AtomicLong pendingCount      = new AtomicLong(0);
+    private final AtomicLong pendingCount = new AtomicLong(0);
     private final AtomicLong pendingAgeSeconds = new AtomicLong(0);
-    private final AtomicLong failedCount       = new AtomicLong(0);
+    private final AtomicLong failedCount = new AtomicLong(0);
 
     public OutboxMetrics(DataSource dataSource, Scheduler jdbcScheduler, MeterRegistry meterRegistry) {
-        this.dataSource    = dataSource;
+        this.dataSource = dataSource;
         this.jdbcScheduler = jdbcScheduler;
         this.meterRegistry = meterRegistry;
     }
@@ -66,21 +69,23 @@ public class OutboxMetrics {
                             pendingAgeSeconds.set(stats[1]);
                             failedCount.set(stats[2]);
                             if (stats[0] > 100) {
-                                log.warn("Outbox pending count={} exceeds threshold 100 — relay may be stuck", stats[0]);
+                                log.warn("Outbox pending count={} exceeds threshold 100 — relay may be stuck",
+                                        stats[0]);
                             }
                             if (stats[1] > 30) {
-                                log.warn("Outbox oldest pending age={}s exceeds threshold 30s — relay may be stuck", stats[1]);
+                                log.warn("Outbox oldest pending age={}s exceeds threshold 30s — relay may be stuck",
+                                        stats[1]);
                             }
                         },
                         err -> log.error("Outbox metrics query failed", err));
     }
 
-    private long[] queryOutboxStats() throws Exception {
+    private long[] queryOutboxStats() throws SQLException {
         String sql =
                 "SELECT COUNT(*) FILTER (WHERE status='PENDING'), "
-              + "COALESCE(EXTRACT(EPOCH FROM (now() - MIN(created_at) FILTER (WHERE status='PENDING'))), 0), "
-              + "COUNT(*) FILTER (WHERE status='FAILED') "
-              + "FROM outbox WHERE status IN ('PENDING','FAILED')";
+                        + "COALESCE(EXTRACT(EPOCH FROM (now() - MIN(created_at) FILTER (WHERE status='PENDING'))), 0), "
+                        + "COUNT(*) FILTER (WHERE status='FAILED') "
+                        + "FROM outbox WHERE status IN ('PENDING','FAILED')";
         try (Connection conn = dataSource.getConnection();
              var stmt = conn.createStatement()) {
             stmt.setQueryTimeout(5);

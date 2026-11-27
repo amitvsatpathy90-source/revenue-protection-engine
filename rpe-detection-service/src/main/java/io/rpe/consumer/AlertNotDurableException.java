@@ -8,27 +8,37 @@ package io.rpe.consumer;
  * so a re-drive within the dedup TTL is dedup-blocked and never re-runs the detectors —
  * and past the TTL the velocity window has moved, so the original rule won't re-fire.
  *
- * This exception therefore carries the detection outcome to the DLT record as headers
+ * <p>This exception therefore carries the detection outcome to the DLT record as headers
  * (via the {@code DeadLetterPublishingRecoverer} headers function in {@code KafkaConfig}),
  * making the record self-sufficient: on re-drive, {@code PaymentEventConsumer} reconstructs
  * the alert intent deterministically from {@code eventId + ruleName} (UUIDv5 is
  * recomputable) and submits it straight to the outbox — no gate re-run, no state
  * pollution; {@code processed_alerts ON CONFLICT} absorbs any duplicate.
  *
- * The exception message deliberately carries the rule name only — {@code reason} may
+ * <p>The exception message deliberately carries the rule name only — {@code reason} may
  * contain amount/speed detail and rides in the header + alert payload, never in a
  * message that reaches exception fingerprints (the security discipline).
  */
 public class AlertNotDurableException extends RuntimeException {
 
-    /** Value of {@link #OUTCOME_HEADER} identifying a reconstructable firing. */
+    /**
+     * Value of {@link #OUTCOME_HEADER} identifying a reconstructable firing.
+     */
     public static final String OUTCOME_ALERT_UNDURABLE = "ALERT_UNDURABLE";
 
-    /** DLT header: detection outcome at failure time. */
+    /**
+     * DLT header: detection outcome at failure time.
+     */
     public static final String OUTCOME_HEADER = "x-rpe-outcome";
-    /** DLT header: the firing detector's ruleName — the UUIDv5 alert_id input. */
+
+    /**
+     * DLT header: the firing detector's ruleName — the UUIDv5 alert_id input.
+     */
     public static final String RULE_HEADER = "x-rpe-rule";
-    /** DLT header: the firing detector's human-readable reason. */
+
+    /**
+     * DLT header: the firing detector's human-readable reason.
+     */
     public static final String REASON_HEADER = "x-rpe-reason";
 
     private final String ruleName;
@@ -40,7 +50,11 @@ public class AlertNotDurableException extends RuntimeException {
         this.reason = reason;
     }
 
-    public String ruleName() { return ruleName; }
+    public String ruleName() {
+        return ruleName;
+    }
 
-    public String reason() { return reason; }
+    public String reason() {
+        return reason;
+    }
 }

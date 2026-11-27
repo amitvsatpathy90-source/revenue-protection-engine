@@ -48,33 +48,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The SASL/ACL smoke run (the Kafka transport-security discipline) — MANUAL, not CI:
+ * Manual SASL/ACL smoke test against a SASL-enabled Redpanda with authorization on. Not run in CI.
  *
  * <pre>
  *   RPE_SASL_SMOKE=true mvn -f rpe-detection-service/pom.xml -q test -Dtest=SaslAclSmokeTest
  * </pre>
- *
- * Without {@code RPE_SASL_SMOKE=true} the class is disabled entirely, so the ordinary
- * Testcontainers suites keep running PLAINTEXT unchanged. Everything CI cannot see — the SASL
- * handshake, broker-side ACL enforcement, and the admin-client transport fold — is exercised
- * here against a SASL-enabled Redpanda with authorization on:
+ * <p>
+ * Disabled unless {@code RPE_SASL_SMOKE=true}, so the PLAINTEXT Testcontainers suites are unaffected.
  *
  * <ol>
- *   <li>Each DLT owner's principal, authenticated via the REAL {@code KafkaSecurity} helper,
- *       performs a successful depth query on its own DLT (the per-service ACL matrix rows).</li>
- *   <li>A principal denied a topic gets {@code TopicAuthorizationException}.</li>
- *   <li>The Bundle-1 finding end-to-end: WITHOUT the {@code .parked} DESCRIBE grant, the real
- *       {@code DltDepthMetrics} silently reports 0 for a NON-EMPTY parked topic (false-healthy)
- *       while {@code rpe.dlt.depth.poll_failures} rises; adding the grant makes the gauge see
- *       the record. This is the only executable proof that the frozen-gauge failure mode and
- *       its fix behave as documented.</li>
- *   <li>The relay's transactional init fails without its prefixed txn-id ACL
- *       ({@code TransactionalIdAuthorizationException}) and succeeds once granted (ADR-06/20).</li>
+ *   <li>Each DLT owner authenticates via the real {@code KafkaSecurity} and queries its own DLT depth.</li>
+ *   <li>A principal without a grant gets {@code TopicAuthorizationException}.</li>
+ *   <li>Without the {@code .parked} DESCRIBE grant, {@code DltDepthMetrics} reports a false-healthy 0
+ *       while {@code rpe.dlt.depth.poll_failures} rises; the grant fixes it.</li>
+ *   <li>Relay transactional init fails without its prefixed txn-id ACL, succeeds once granted (ADR-06/20).</li>
  * </ol>
- *
- * Test order is load-bearing (deny-then-grant narratives) — hence {@code @TestMethodOrder}.
- * SCRAM users are created through Redpanda's Admin HTTP API; ACLs through the Kafka Admin API
- * under a superuser — the same wire operations {@code provision-acls.sh} issues via rpk.
+ * <p>
+ * Test order is load-bearing (deny-then-grant), hence {@code @TestMethodOrder}.
  */
 @Tag("sasl-smoke")
 @EnabledIfEnvironmentVariable(named = "RPE_SASL_SMOKE", matches = "true")
@@ -97,13 +87,22 @@ class SaslAclSmokeTest {
                     .enableSasl()
                     .withSuperuser(SUPERUSER);
 
+    /**
+     * Shared client for Redpanda Admin HTTP API calls; closed in {@link #closeAll()}.
+     */
+    private static final HttpClient HTTP = HttpClient.newHttpClient();
+
     private static Admin superAdmin;
     private static final List<AutoCloseable> toClose = new ArrayList<>();
 
+    /**
+     * Creates SCRAM users, topics, and the ACL matrix (minus grants proven missing in tests 3 and 4).
+     */
     @BeforeAll
     static void provision() throws Exception {
-        // Users first (Redpanda Admin HTTP API — no auth required on the lab admin listener),
-        // superuser included: withSuperuser() only names it in redpanda.superusers.
+        toClose.add(HTTP);
+
+        // withSuperuser() only names the user; it must still be created.
         for (String user : List.of(SUPERUSER, "rpe-detection", "rpe-alert", "rpe-triage", "rpe-relay")) {
             createScramUser(user);
         }
@@ -122,14 +121,12 @@ class SaslAclSmokeTest {
                 new NewTopic("payment.alerts.triage.DLT.parked", 1, (short) 1)
         )).all().get(TIMEOUT_SEC, TimeUnit.SECONDS);
 
-        // The provision-acls.sh matrix — DELIBERATELY MINUS the .parked DESCRIBE grants
-        // (added mid-test 3 to prove the blind-gauge finding) and MINUS the relay txn-id ACL
-        // (added mid-test 4 to prove the init failure).
+        // provision-acls.sh matrix, minus .parked DESCRIBE (test 3) and relay txn-id ACL (test 4).
         List<AclBinding> matrix = new ArrayList<>(List.of(
                 topicAcl("rpe-detection", "payment.events", AclOperation.READ),
                 topicAcl("rpe-detection", EVENTS_DLT, AclOperation.WRITE),
                 topicAcl("rpe-detection", EVENTS_DLT, AclOperation.DESCRIBE),
-                clusterAcl("rpe-detection", AclOperation.IDEMPOTENT_WRITE),
+                idempotentWriteAcl("rpe-detection"),
                 topicAcl("rpe-alert", "payment.alerts", AclOperation.READ),
                 topicAcl("rpe-alert", "payment.alerts.DLT", AclOperation.WRITE),
                 topicAcl("rpe-alert", "payment.alerts.DLT", AclOperation.DESCRIBE),
@@ -138,11 +135,14 @@ class SaslAclSmokeTest {
                 topicAcl("rpe-triage", "payment.alerts.triage.DLT", AclOperation.DESCRIBE),
                 topicAcl("rpe-relay", "payment.alerts", AclOperation.WRITE),
                 topicAcl("rpe-relay", "payment.alerts", AclOperation.DESCRIBE),
-                clusterAcl("rpe-relay", AclOperation.IDEMPOTENT_WRITE)
+                idempotentWriteAcl("rpe-relay")
         ));
         superAdmin.createAcls(matrix).all().get(TIMEOUT_SEC, TimeUnit.SECONDS);
     }
 
+    /**
+     * Closes the shared HTTP client and admin clients in insertion order.
+     */
     @AfterAll
     static void closeAll() throws Exception {
         for (AutoCloseable c : toClose) {
@@ -152,6 +152,9 @@ class SaslAclSmokeTest {
 
     // ── 1. transport auth + own-DLT depth query per owner ──────────────────────────────────
 
+    /**
+     * Verifies SASL handshake and per-service ACL rows: each owner can read its own DLT depth.
+     */
     @Test
     @Order(1)
     void eachDltOwnerCanQueryItsOwnDltDepth() throws Exception {
@@ -171,11 +174,13 @@ class SaslAclSmokeTest {
 
     // ── 2. least privilege actually denies ─────────────────────────────────────────────────
 
+    /**
+     * Verifies the broker, not convention, rejects a principal with no grant on the topic.
+     */
     @Test
     @Order(2)
     void principalDeniedATopicGetsTopicAuthorizationException() {
-        // Detection holds no grant of any kind on payment.alerts (relay writes it; alert/triage
-        // read it). The broker, not convention, must reject.
+        // Detection has no grant of any kind on payment.alerts.
         try (Admin detection = Admin.create(clientProps("rpe-detection"))) {
             assertThatThrownBy(() -> depth(detection, "payment.alerts"))
                     .isInstanceOf(ExecutionException.class)
@@ -185,10 +190,13 @@ class SaslAclSmokeTest {
 
     // ── 3. the Bundle-1 finding, end-to-end ─────────────────────────────────────────────────
 
+    /**
+     * Proves the false-healthy gauge without DESCRIBE on {@code .parked}, and recovery after the grant.
+     */
     @Test
     @Order(3)
     void parkedDepthGaugeIsFalseHealthyWithoutDescribeGrantAndSeesAfterIt() throws Exception {
-        // A real record sits on the parked topic (superuser writes it — operator-only in prod).
+        // Superuser seeds one record (operator-only write in prod).
         try (KafkaProducer<String, String> producer = new KafkaProducer<>(producerProps(SUPERUSER))) {
             producer.send(new ProducerRecord<>(EVENTS_PARKED, "k", "poison")).get(TIMEOUT_SEC, TimeUnit.SECONDS);
         }
@@ -197,9 +205,7 @@ class SaslAclSmokeTest {
         try (Admin detectionAdmin = Admin.create(clientProps("rpe-detection"))) {
             DltDepthMetrics poller = new DltDepthMetrics(detectionAdmin, registry);
 
-            // WITHOUT the .parked DESCRIBE grant: the poll is authorization-denied, the
-            // @BoundaryHandler absorbs it, and the gauge reads 0 for a NON-EMPTY topic.
-            // Only the poll_failures counter betrays that the 0 is a lie.
+            // No DESCRIBE grant: poll denied, handler absorbs it, gauge stays 0 (false-healthy).
             poller.refresh();
             double blindDepth = registry.get("rpe.dlt.depth").tag("topic", EVENTS_PARKED).gauge().value();
             double failures = registry.get("rpe.dlt.depth.poll_failures").tag("topic", EVENTS_PARKED).counter().count();
@@ -210,8 +216,7 @@ class SaslAclSmokeTest {
                     .as("the meta-signal must expose the blind poll")
                     .isGreaterThan(0);
 
-            // Grant DESCRIBE on .parked (the Bundle-1 provision-acls.sh addition) — the same
-            // poller instance must now see the record.
+            // Grant DESCRIBE; same poller instance must now see the record.
             superAdmin.createAcls(List.of(topicAcl("rpe-detection", EVENTS_PARKED, AclOperation.DESCRIBE)))
                     .all().get(TIMEOUT_SEC, TimeUnit.SECONDS);
             poller.refresh();
@@ -223,6 +228,9 @@ class SaslAclSmokeTest {
 
     // ── 4. relay txn-id ACL (ADR-06/20) ─────────────────────────────────────────────────────
 
+    /**
+     * Verifies transactional init is denied without the prefixed txn-id ACL and works once granted.
+     */
     @Test
     @Order(4)
     void relayTransactionalInitFailsWithoutTxnIdAclThenSucceedsWithIt() throws Exception {
@@ -253,8 +261,13 @@ class SaslAclSmokeTest {
 
     // ── helpers ─────────────────────────────────────────────────────────────────────────────
 
+    /**
+     * Creates a SCRAM user via the Redpanda Admin HTTP API (no auth on the lab admin listener).
+     *
+     * @param username SCRAM principal name
+     */
     private static void createScramUser(String username) throws Exception {
-        HttpResponse<String> response = HttpClient.newHttpClient().send(
+        HttpResponse<String> response = HTTP.send(
                 HttpRequest.newBuilder(URI.create(REDPANDA.getAdminAddress() + "/v1/security/users"))
                         .header("Content-Type", "application/json")
                         .POST(HttpRequest.BodyPublishers.ofString(
@@ -267,7 +280,11 @@ class SaslAclSmokeTest {
                 .isEqualTo(200);
     }
 
-    /** The REAL production transport assembly — this is the fold under test (ADR-20). */
+    /**
+     * Builds client props through the real production transport assembly (ADR-20).
+     *
+     * @param username SCRAM principal to authenticate as
+     */
     private static Map<String, Object> clientProps(String username) {
         Map<String, Object> props = new HashMap<>(
                 KafkaSecurity.transportProps("SASL_PLAINTEXT", MECHANISM, username, PW, "", ""));
@@ -277,6 +294,11 @@ class SaslAclSmokeTest {
         return props;
     }
 
+    /**
+     * Extends {@link #clientProps(String)} with String serializers for producers.
+     *
+     * @param username SCRAM principal to authenticate as
+     */
     private static Map<String, Object> producerProps(String username) {
         Map<String, Object> props = clientProps(username);
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
@@ -285,6 +307,13 @@ class SaslAclSmokeTest {
         return props;
     }
 
+    /**
+     * Computes topic depth as sum of (latest - earliest) offsets across partitions.
+     *
+     * @param admin authenticated admin client
+     * @param topic topic to measure
+     * @return record count currently retained
+     */
     private static long depth(Admin admin, String topic) throws Exception {
         var description = admin.describeTopics(List.of(topic))
                 .topicNameValues().get(topic).get(TIMEOUT_SEC, TimeUnit.SECONDS);
@@ -304,16 +333,26 @@ class SaslAclSmokeTest {
         return depth;
     }
 
+    /**
+     * Literal-pattern ALLOW ACL on a single topic.
+     */
     private static AclBinding topicAcl(String user, String topic, AclOperation op) {
         return new AclBinding(
                 new ResourcePattern(ResourceType.TOPIC, topic, PatternType.LITERAL), allow(user, op));
     }
 
-    private static AclBinding clusterAcl(String user, AclOperation op) {
+    /**
+     * Cluster-scope IDEMPOTENT_WRITE grant, required by idempotent/transactional producers.
+     */
+    private static AclBinding idempotentWriteAcl(String user) {
         return new AclBinding(
-                new ResourcePattern(ResourceType.CLUSTER, "kafka-cluster", PatternType.LITERAL), allow(user, op));
+                new ResourcePattern(ResourceType.CLUSTER, "kafka-cluster", PatternType.LITERAL),
+                allow(user, AclOperation.IDEMPOTENT_WRITE));
     }
 
+    /**
+     * ALLOW entry for {@code User:<user>} from any host.
+     */
     private static AccessControlEntry allow(String user, AclOperation op) {
         return new AccessControlEntry("User:" + user, "*", op, AclPermissionType.ALLOW);
     }

@@ -30,7 +30,9 @@ class RateLimiterServiceTest {
         return new RateLimiterService(props, cls, distributed, meters);
     }
 
-    /** Distributed limiter down ⇒ degrade to local; an account under ample rate still acquires. */
+    /**
+     * Distributed limiter down ⇒ degrade to local; an account under ample rate still acquires.
+     */
     @Test
     void degradesToLocalAndAcquiresUnderAmpleRate() {
         AccountClassificationService cls = mock(AccountClassificationService.class);
@@ -50,7 +52,9 @@ class RateLimiterServiceTest {
                 .count()).isEqualTo(2.0);
     }
 
-    /** Distributed allow ⇒ never touches the local limiter; outcome recorded as mode=distributed. */
+    /**
+     * Distributed allow ⇒ never touches the local limiter; outcome recorded as mode=distributed.
+     */
     @Test
     void usesDistributedWhenAvailable_noDegrade() {
         AccountClassificationService cls = mock(AccountClassificationService.class);

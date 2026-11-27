@@ -10,7 +10,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Pins the raw-reply mapping contract (ADR-14).
- *
+ * <p>
  * The load-bearing behaviour: PARTIAL geo state throws — it is never silently coerced
  * to a null geoPrev. Silent coercion turns a Lua regression into invisible missed
  * detections with no signal. Geo violations are IllegalArgumentException; reply-shape
@@ -61,8 +61,9 @@ class LuaGateResultTest {
 
     @Test
     void partialGeoStateThrowsInsteadOfCoercingToNull() {
-        assertThatThrownBy(() ->
-                LuaGateResult.from(reply(0L, 0L, 1L, "10.0", "0.0", "37.0", null, null)))
+        List<Object> raw = reply(0L, 0L, 1L, "10.0", "0.0", "37.0", null, null);
+
+        assertThatThrownBy(() -> LuaGateResult.from(raw))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("partial geo state")
                 .hasMessageContaining("latPresent=true")
@@ -71,8 +72,9 @@ class LuaGateResultTest {
 
     @Test
     void missingTimestampWithCoordinatesThrows() {
-        assertThatThrownBy(() ->
-                LuaGateResult.from(reply(0L, 0L, 1L, "10.0", "0.0", "37.0", "-122.0", null)))
+        List<Object> raw = reply(0L, 0L, 1L, "10.0", "0.0", "37.0", "-122.0", null);
+
+        assertThatThrownBy(() -> LuaGateResult.from(raw))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("tsPresent=false");
     }
@@ -80,18 +82,19 @@ class LuaGateResultTest {
     @Test
     void outOfRangeGeoValueThrowsGeoViolation() {
         // GeoSnapshot guards propagate through the mapper as IllegalArgumentException
-        assertThatThrownBy(() ->
-                LuaGateResult.from(reply(0L, 0L, 1L, "10.0", "0.0", "999.0", "-122.0", "1700000000000")))
+        List<Object> raw = reply(0L, 0L, 1L, "10.0", "0.0", "999.0", "-122.0", "1700000000000");
+
+        assertThatThrownBy(() -> LuaGateResult.from(raw))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("out of range");
     }
 
     @Test
     void malformedWelfordFieldThrowsShapeViolation() {
-        // Non-geo parse failures are IllegalStateException (reason=shape), and the
-        // message names the exception type — never the raw value
-        assertThatThrownBy(() ->
-                LuaGateResult.from(reply(0L, 0L, 1L, "not-a-number", "0.0", null, null, null)))
+        // Non-geo parse failures are IllegalStateException message names the exception type, never the raw value
+        List<Object> raw = reply(0L, 0L, 1L, "not-a-number", "0.0", null, null, null);
+
+        assertThatThrownBy(() -> LuaGateResult.from(raw))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("gate reply shape invalid")
                 .hasMessageNotContaining("not-a-number");
@@ -99,15 +102,18 @@ class LuaGateResultTest {
 
     @Test
     void wrongTypeInCountFieldThrowsShapeViolation() {
-        assertThatThrownBy(() ->
-                LuaGateResult.from(reply(0L, 0L, "not-a-long", "10.0", "0.0", null, null, null)))
+        List<Object> raw = reply(0L, 0L, "not-a-long", "10.0", "0.0", null, null, null);
+
+        assertThatThrownBy(() -> LuaGateResult.from(raw))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("gate reply shape invalid");
     }
 
     @Test
     void emptyReplyThrowsShapeViolation() {
-        assertThatThrownBy(() -> LuaGateResult.from(reply()))
+        List<Object> raw = reply();
+
+        assertThatThrownBy(() -> LuaGateResult.from(raw))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("gate reply shape invalid");
     }

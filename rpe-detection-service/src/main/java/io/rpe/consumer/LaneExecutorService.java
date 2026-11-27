@@ -22,12 +22,14 @@ import java.util.function.Consumer;
 /**
  * Provides per-account single-threaded virtual-thread executors (lanes).
  *
- * Each account's events execute on a dedicated single-threaded lane:
- *   - Enforces per-account ordering (atomicity and ordering are different properties)
- *   - Required for geo read-before-write correctness
- *   - Caffeine bounds memory: evicts idle account lanes after 10 minutes
+ * <p>Each account's events execute on a dedicated single-threaded lane:
+ * <ul>
+ *   <li>Enforces per-account ordering (atomicity and ordering are different properties).</li>
+ *   <li>Required for geo read-before-write correctness.</li>
+ *   <li>Caffeine bounds memory: evicts idle account lanes after 10 minutes.</li>
+ * </ul>
  *
- * {@code ArrayBlockingQueue(200)} + {@link BoundedBlockingSubmitPolicy} is the back-pressure
+ * <p>{@code ArrayBlockingQueue(200)} + {@link BoundedBlockingSubmitPolicy} is the back-pressure
  * mechanism (ADR-07, amended 2026-07-06). When a lane's queue fills, the submitting thread
  * PARKS on the queue until capacity frees — the Kafka consumer thread cannot poll while
  * parked, so consumer lag rises visibly; ops team sees it. No external pause/resume needed.
@@ -36,7 +38,7 @@ import java.util.function.Consumer;
  * to provide (two threads in the Redis gate for one account) and processing the inline event
  * out of offset order.
  *
- * Lane eviction is zero-cost: all account state lives in Redis, not in the lane.
+ * <p>Lane eviction is zero-cost: all account state lives in Redis, not in the lane.
  */
 @Service
 public class LaneExecutorService {
@@ -100,8 +102,10 @@ public class LaneExecutorService {
         lanes.invalidate(accountId);
     }
 
-    /** Outcome of a global drain: total live lanes, how many terminated in time, and whether
-     *  the bounded deadline was hit (remaining tasks abandoned). */
+    /**
+     * Outcome of a global drain: total live lanes, how many terminated in time, and whether
+     * the bounded deadline was hit (remaining tasks abandoned).
+     */
     public record DrainResult(int lanes, int drained, boolean forced) {}
 
     /**
@@ -109,7 +113,7 @@ public class LaneExecutorService {
      * {@code LaneDrainLifecycle}, which runs AFTER the Kafka container has stopped — so no new
      * lane task can be submitted while this runs (the precondition for a clean drain).
      *
-     * Per-account ordering is preserved across the drain: each lane is a single-threaded
+     * <p>Per-account ordering is preserved across the drain: each lane is a single-threaded
      * executor, so {@code shutdown()} lets it finish its already-queued tasks in order before
      * terminating; only NEW submissions are rejected. Lanes are shut down first (all at once),
      * then awaited against a shared deadline, so one slow account cannot starve the others'
@@ -163,20 +167,21 @@ public class LaneExecutorService {
 
     /** Park granularity while awaiting lane capacity; each slice is interruptible. */
     private static final long OFFER_SLICE_MS = 500;
+
     /** WARN cadence while parked: every N slices (~5s), so a wedged lane is ops-visible. */
     private static final int SLICES_PER_WARN = 10;
 
     /**
      * Saturation policy replacing {@code CallerRunsPolicy} (ADR-07 amendment, 2026-07-06).
      *
-     * Inline execution on the submitting thread broke the per-account single-writer
+     * <p>Inline execution on the submitting thread broke the per-account single-writer
      * invariant two ways: (a) the listener thread ran the Redis gate CONCURRENTLY with the
      * lane worker for the same account — geo read-before-write races (both read the same
      * prev location); (b) the inline event processed out of offset order. It also parked
      * the listener up to 5s inside RateLimiterService.tryAcquire — the exact anti-pattern
      * the consumer-idempotency discipline.
      *
-     * This policy parks the SUBMITTER on the queue until capacity frees instead. The
+     * <p>This policy parks the SUBMITTER on the queue until capacity frees instead. The
      * backpressure signature is identical (a parked listener cannot poll; consumer lag
      * rises), but the lane worker stays the only thread that ever executes account tasks,
      * so ordering and single-writer hold under saturation. The park never gives up on its
@@ -186,7 +191,7 @@ public class LaneExecutorService {
      * drain — reject; asyncAcks holds the watermark and Kafka redelivers), or the thread
      * is interrupted (container shutdown — same redelivery safety net).
      *
-     * One legitimate inline execution remains: the lane's OWN worker re-submitting to its
+     * <p>One legitimate inline execution remains: the lane's OWN worker re-submitting to its
      * full lane (the CallNotPermittedException retry in processEvent racing the CB
      * NORMAL→BUFFERING flip). Parking there would deadlock the queue's only consumer.
      * Running inline is correct — same thread is still the single writer, and the retried

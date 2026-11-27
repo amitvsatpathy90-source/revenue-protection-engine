@@ -8,7 +8,9 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
-/** Precedence 30 (last). See {@link VelocityDetector} — detector order is part of the alert-id contract. */
+/**
+ * Precedence 30 (last). See {@link VelocityDetector} — detector order is part of the alert-id contract.
+ */
 @Component
 @Order(30)
 public class GeoDetector implements Detector {
@@ -27,16 +29,20 @@ public class GeoDetector implements Detector {
             MeterRegistry meterRegistry) {
         this.props = props;
         this.classificationService = classificationService;
-        // Bounded counter (no account tag — PII/cardinality rule). Geo bypass must be
-        // observable, never silent (ADR-04).
+
+        // Bounded counter (no account tag — PII/cardinality rule).
+        // Geo bypass must be observable, never silent (ADR-04).
         this.exemptSkips = meterRegistry.counter("rpe.geo.exempt.skip");
     }
 
     @Override
-    public String ruleName() { return RULE_NAME; }
+    public String ruleName() {
+        return RULE_NAME;
+    }
 
     @Override
     public DetectionResult evaluate(LuaGateResult result, PaymentEvent event, long brokerIngestMs) {
+
         // Explicit opt-in bypass for sharded/composite-key accounts where per-account
         // ordering is intentionally relaxed (ADR-04). Classification is cached 60s.
         if (classificationService.isGeoExempt(event.accountId())) {
@@ -61,7 +67,7 @@ public class GeoDetector implements Detector {
             return DetectionResult.clean("geo:non-positive-time-delta");
         }
 
-        double speedKmh   = distKm / (deltaMs / 3_600_000.0);
+        double speedKmh = distKm / (deltaMs / 3_600_000.0);
         double maxSpeedKmh = props.detection().geo().maxSpeedKmh();
 
         if (speedKmh > maxSpeedKmh) {
@@ -75,9 +81,9 @@ public class GeoDetector implements Detector {
     private static double haversineKm(double lat1, double lon1, double lat2, double lon2) {
         double dLat = Math.toRadians(lat2 - lat1);
         double dLon = Math.toRadians(lon2 - lon1);
-        double a    = Math.sin(dLat / 2) * Math.sin(dLat / 2)
-                    + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
-                    * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(dLon / 2) * Math.sin(dLon / 2);
         return 2 * EARTH_RADIUS_KM * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 }

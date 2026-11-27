@@ -61,48 +61,50 @@ import static org.mockito.Mockito.when;
  *       behaviour was correct already but UNTESTED; it is negative-tested (fails on a consumer that
  *       acks unconditionally).</li>
  * </ol>
- *
+ * <p>
  * Neither test needs Docker.
  */
 class DltPublishFailureTest {
+
+    private static final String ACCOUNT_ID = "acct-1";
 
     // ── Config pin: the recoverer is configured to wait-for-result + fail (version-proof) ────
 
     @Test
     @SuppressWarnings("unchecked")
     void dltRecovererIsConfiguredToWaitForTheSendResultAndFailOnError() throws Exception {
-        // White-box on the DLPR fields. NOTE: spring-kafka 4.1.0 already DEFAULTS
-        // failIfSendResultIsError to true, so this assertion holds by default too — it is a PIN
-        // against a future default flip (the value was false in 2.x/3.x), not a proof that our
-        // explicit setter changed behaviour. Re-proving the throw-on-failure behaviour is not ours
-        // to do — it is Spring Kafka's own documented, tested contract.
+        // White-box on DLPR fields. spring-kafka 4.1.0 already defaults failIfSendResultIsError
+        // to true (false in 2.x/3.x), so this is a pin against a future default flip,
+        // not proof our explicit setter changed behaviour. Throw-on-failure itself is
+        // Spring Kafka's own documented, tested contract.
         KafkaConfig config = new KafkaConfig("PLAINTEXT", "SCRAM-SHA-512", "", "", "", "");
         DeadLetterPublishingRecoverer recoverer = config.dltRecoverer(
                 mock(KafkaTemplate.class), mock(KafkaTemplate.class));
 
-        assertThat(readBoolean(recoverer, "failIfSendResultIsError"))
+        Boolean failIfSendResultIsError = readField(recoverer, "failIfSendResultIsError");
+        Duration waitForSendResultTimeout = readField(recoverer, "waitForSendResultTimeout");
+
+        assertThat(failIfSendResultIsError)
                 .as("the recoverer must fail (not fire-and-forget) on a failed DLT send, so the "
                         + "caller never acks a record that did not reach the DLT — pinned so a future "
                         + "spring-kafka default flip cannot silently reintroduce fire-and-forget")
                 .isTrue();
 
-        assertThat(readDuration(recoverer, "waitForSendResultTimeout"))
+        assertThat(waitForSendResultTimeout)
                 .as("the result-wait must be bounded — a wedged broker must not hang the lane VT "
                         + "inside accept() indefinitely")
                 .isPositive()
                 .isLessThanOrEqualTo(Duration.ofSeconds(30));
     }
 
-    private static boolean readBoolean(Object target, String field) throws Exception {
+    /**
+     * Reads a private field of {@link DeadLetterPublishingRecoverer} reflectively.
+     */
+    @SuppressWarnings("unchecked")
+    private static <T> T readField(Object target, String field) throws Exception {
         Field f = DeadLetterPublishingRecoverer.class.getDeclaredField(field);
         f.setAccessible(true);
-        return f.getBoolean(target);
-    }
-
-    private static Duration readDuration(Object target, String field) throws Exception {
-        Field f = DeadLetterPublishingRecoverer.class.getDeclaredField(field);
-        f.setAccessible(true);
-        return (Duration) f.get(target);
+        return (T) f.get(target);
     }
 
     // ── Mechanism 2: a throwing recoverer must leave the offset UNACKED + count the failure ──
@@ -114,23 +116,26 @@ class DltPublishFailureTest {
         RateLimiterService rateLimiter = mock(RateLimiterService.class);
         when(rateLimiter.tryAcquire(anyString())).thenReturn(true);
 
-        // The gate deterministically fails with a per-event contract violation (not retried,
-        // routed straight to the lane's DLT path — the terminal path finding #1 is about).
+        // Gate fails with a per-event contract violation: not retried, routed straight
+        // to the lane's DLT path (the terminal path finding #1 is about)
         RedisGate gate = mock(RedisGate.class);
         when(gate.execute(anyString(), anyString(), any(), any(), any(),
                 anyLong(), anyLong(), anyLong(), anyLong(), anyInt(), anyInt(), anyLong()))
                 .thenReturn(Mono.error(new GateContractViolation("evt", "shape", null)));
 
         CbFallbackHandler cb = mock(CbFallbackHandler.class);
-        // NORMAL routing: run the lane task inline on the calling thread so processEvent executes.
-        doAnswer(inv -> { ((Runnable) inv.getArgument(1)).run(); return null; })
+        // NORMAL routing: run the lane task inline so processEvent executes
+        doAnswer(inv -> {
+            ((Runnable) inv.getArgument(1)).run();
+            return null;
+        })
                 .when(cb).dispatch(anyString(), any(Runnable.class));
 
         Validator validator = mock(Validator.class);
         when(validator.validate(any())).thenReturn(Collections.emptySet());
 
-        // The injected failure: the DLT publish itself fails (Kafka unavailable). With finding #1's
-        // fix this is exactly what a failed send now looks like to the consumer (mechanism 1).
+        // Injected failure: the DLT publish itself fails (Kafka unavailable),
+        // exactly what a failed send looks like to the consumer after finding #1 (mechanism 1)
         DeadLetterPublishingRecoverer recoverer = mock(DeadLetterPublishingRecoverer.class);
         doThrow(new RuntimeException("broker unreachable")).when(recoverer).accept(any(), any());
 
@@ -144,11 +149,11 @@ class DltPublishFailureTest {
                 recoverer, reg, traceWriter);
 
         Acknowledgment ack = mock(Acknowledgment.class);
-        consumer.consume(record("acct-1"), ack);
+        consumer.consume(consumerRecord(), ack);
 
         verify(recoverer).accept(any(), any());
-        // The offset must NOT be acked when the DLT publish failed — it stays uncommitted so
-        // asyncAcks holds the watermark and Kafka redelivers, rather than committing past a lost record.
+        // Offset stays uncommitted on DLT failure: asyncAcks holds the watermark and
+        // Kafka redelivers, rather than committing past a lost record
         verify(ack, never()).acknowledge();
         assertThat(reg.counter("rpe.dlt.publish.failed").count())
                 .as("a failed DLT publish must be counted, not silent")
@@ -157,17 +162,19 @@ class DltPublishFailureTest {
 
     // ── fixtures ─────────────────────────────────────────────────────────────────────────────
 
-    private static PaymentEvent samplePaymentEvent(String accountId) {
-        return new PaymentEvent("evt-" + accountId, accountId,
+    private static PaymentEvent samplePaymentEvent() {
+        return new PaymentEvent("evt-" + ACCOUNT_ID, ACCOUNT_ID,
                 new BigDecimal("10.00"), new BigDecimal("1.0"), new BigDecimal("1.0"),
                 Instant.now(), "1");
     }
 
-    private static ConsumerRecord<String, PaymentEvent> record(String accountId) {
-        return new ConsumerRecord<>("payment.events", 0, 0L, accountId, samplePaymentEvent(accountId));
+    private static ConsumerRecord<String, PaymentEvent> consumerRecord() {
+        return new ConsumerRecord<>("payment.events", 0, 0L, ACCOUNT_ID, samplePaymentEvent());
     }
 
-    /** Real properties so the gate-arg accessors (props.detection().velocity()...) resolve. */
+    /**
+     * Real properties so the gate-arg accessors (props.detection().velocity()...) resolve.
+     */
     private static io.rpe.config.RpeProperties realProps() {
         return new io.rpe.config.RpeProperties(
                 new io.rpe.config.RpeProperties.ResilienceProperties(

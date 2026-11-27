@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Pins the one CB setting the C+D fallback (ADR-02) cannot function without.
  *
- * Once the {@code redis} breaker opens, the fallback buffers every event WITHOUT calling
+ * <p>Once the {@code redis} breaker opens, the fallback buffers every event WITHOUT calling
  * the gate — so nothing ever attempts a permission on the breaker again. Resilience4j's
  * OPEN→HALF_OPEN transition is lazy by default: "the transition to HALF_OPEN only happens
  * if a call is made, even after waitDurationInOpenState is passed". Lazy transition +
@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code automaticTransitionFromOpenToHalfOpenEnabled: true} breaks the cycle: the
  * OPEN_TO_HALF_OPEN event fires on schedule and triggers the drain.
  *
- * CbFallbackHandlerTest masks this in isolation because it forces
+ * <p>CbFallbackHandlerTest masks this in isolation because it forces
  * {@code transitionToHalfOpenState()} manually — nothing in production issues that call.
  */
 class RedisCircuitBreakerAutoTransitionTest {

@@ -26,6 +26,19 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class LaneExecutorServiceTest {
 
+    /**
+     * Waits up to 10s for the latch; fails on timeout, restores the interrupt flag if interrupted.
+     */
+    private static void awaitOrFail(CountDownLatch latch) {
+        try {
+            if (!latch.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("latch not released within 10s");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     @Test
     void getOrCreateReturnsSameLaneForSameAccount() {
         LaneExecutorService svc = new LaneExecutorService();
@@ -43,7 +56,7 @@ class LaneExecutorServiceTest {
         svc.getOrCreate("acct-1");
         svc.invalidate("acct-1");
 
-        // Caffeine runs removal listeners asynchronously after maintenance.
+        // Caffeine runs removal listeners asynchronously after maintenance
         Awaitility.await().atMost(Duration.ofSeconds(2))
                 .untilAsserted(() -> assertThat(evicted).contains("acct-1"));
     }
@@ -51,12 +64,14 @@ class LaneExecutorServiceTest {
     @Test
     void evictionListenerThatThrowsDoesNotBreakTheCache() {
         LaneExecutorService svc = new LaneExecutorService();
-        svc.onEviction(id -> { throw new RuntimeException("boom"); });
+        svc.onEviction(id -> {
+            throw new RuntimeException("boom");
+        });
 
         svc.getOrCreate("acct-1");
         svc.invalidate("acct-1");
 
-        // A throwing listener must be swallowed; the cache stays usable for new lanes.
+        // Throwing listener must be swallowed; cache stays usable for new lanes
         Awaitility.await().atMost(Duration.ofSeconds(2))
                 .untilAsserted(() -> assertThat(svc.getOrCreate("acct-2")).isNotNull());
     }
@@ -78,9 +93,9 @@ class LaneExecutorServiceTest {
         LaneExecutorService svc = new LaneExecutorService();
         ExecutorService lane = svc.getOrCreate("acct-hot");
 
-        AtomicInteger active        = new AtomicInteger();
+        AtomicInteger active = new AtomicInteger();
         AtomicInteger maxConcurrent = new AtomicInteger();
-        AtomicInteger submitted     = new AtomicInteger();
+        AtomicInteger submitted = new AtomicInteger();
         List<Integer> executionOrder = new CopyOnWriteArrayList<>();
         CountDownLatch release = new CountDownLatch(1);
 
@@ -88,30 +103,30 @@ class LaneExecutorServiceTest {
             lane.submit(() -> {
                 maxConcurrent.accumulateAndGet(active.incrementAndGet(), Math::max);
                 executionOrder.add(i);
-                try {
-                    release.await(10, TimeUnit.SECONDS);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
+                awaitOrFail(release);
                 active.decrementAndGet();
             });
             submitted.incrementAndGet();
         }), "test-listener-thread");
         submitter.start();
 
-        // Task 0 occupies the worker; 1..200 fill the queue; submit #202 must park.
+        // Task 0 occupies the worker, 1..200 fill the queue, submit #202 must park
         Awaitility.await().atMost(Duration.ofSeconds(5))
                 .untilAsserted(() -> assertThat(submitted.get()).isEqualTo(capacity + 1));
 
-        // Hold longer than one offer slice: the submitter must STAY parked (no inline run,
-        // no sneak-through) while the lane is saturated.
-        Thread.sleep(700);
-        assertThat(submitted.get())
-                .as("submitter must park on the full queue, not execute inline and move on")
-                .isEqualTo(capacity + 1);
-        assertThat(active.get())
-                .as("only the lane worker may run account tasks while saturated")
-                .isEqualTo(1);
+        // Hold longer than one offer slice: submitter must STAY parked
+        // (no inline run, no sneak-through) on every poll while saturated
+        Awaitility.await()
+                .during(Duration.ofMillis(700))
+                .atMost(Duration.ofSeconds(3))
+                .untilAsserted(() -> {
+                    assertThat(submitted.get())
+                            .as("submitter must park on the full queue, not execute inline and move on")
+                            .isEqualTo(capacity + 1);
+                    assertThat(active.get())
+                            .as("only the lane worker may run account tasks while saturated")
+                            .isEqualTo(1);
+                });
 
         release.countDown();
         Awaitility.await().atMost(Duration.ofSeconds(10))
@@ -142,16 +157,12 @@ class LaneExecutorServiceTest {
         List<String> executionOrder = new CopyOnWriteArrayList<>();
         AtomicReference<String> markerThread = new AtomicReference<>();
         CountDownLatch workerRunning = new CountDownLatch(1);
-        CountDownLatch queueFilled   = new CountDownLatch(1);
+        CountDownLatch queueFilled = new CountDownLatch(1);
 
         lane.submit(() -> {
             workerRunning.countDown();
-            try {
-                queueFilled.await(10, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            // Queue is now full: this self-submit must run inline, not park (deadlock).
+            awaitOrFail(queueFilled);
+            // Queue is full: self-submit must run inline, not park (deadlock)
             lane.submit(() -> {
                 markerThread.set(Thread.currentThread().getName());
                 executionOrder.add("marker");
@@ -170,7 +181,7 @@ class LaneExecutorServiceTest {
         assertThat(markerThread.get())
                 .as("self-submit must execute on the lane's own worker thread")
                 .startsWith("rpe-lane-");
-        assertThat(executionOrder.get(0))
+        assertThat(executionOrder.getFirst())
                 .as("the retried (oldest) event must precede everything queued")
                 .isEqualTo("marker");
     }
@@ -188,22 +199,17 @@ class LaneExecutorServiceTest {
         ExecutorService lane = svc.getOrCreate("acct-parked");
 
         CountDownLatch release = new CountDownLatch(1);
-        Runnable hold = () -> {
-            try {
-                release.await(10, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        };
+        Runnable hold = () -> awaitOrFail(release);
         for (int i = 0; i < capacity + 1; i++) {
             lane.submit(hold);
         }
 
-        AtomicReference<Boolean> rejected            = new AtomicReference<>(false);
-        AtomicReference<Boolean> interruptRestored   = new AtomicReference<>(false);
+        AtomicReference<Boolean> rejected = new AtomicReference<>(false);
+        AtomicReference<Boolean> interruptRestored = new AtomicReference<>(false);
         Thread parked = new Thread(() -> {
             try {
-                lane.submit(() -> {});
+                lane.submit(() -> {
+                });
             } catch (java.util.concurrent.RejectedExecutionException e) {
                 rejected.set(true);
                 interruptRestored.set(Thread.currentThread().isInterrupted());

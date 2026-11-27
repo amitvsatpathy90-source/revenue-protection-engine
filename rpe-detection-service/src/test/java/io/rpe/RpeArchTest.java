@@ -6,11 +6,11 @@ import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaCodeUnit;
 import com.tngtech.archunit.core.domain.TryCatchBlock;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
+import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.lang.ArchCondition;
+import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
-import com.tngtech.archunit.core.importer.ImportOption;
-import com.tngtech.archunit.lang.ArchRule;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -20,11 +20,13 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
 
 /**
  * ArchUnit rules enforcing critical coding constraints from Architecture Spec.
- *
+ * <p>
  * These rules catch silent failure modes at compile/test time:
- *  - subscribe() with no error handler swallows exceptions silently
- *  - @Transactional on reactive chain causes invisible transaction loss after thread hop
- *  - @KafkaListener returning Mono/Flux is silently ignored by Spring Kafka
+ * <ul>
+ *   <li>subscribe() with no error handler swallows exceptions silently</li>
+ *   <li>@Transactional on reactive chain causes invisible transaction loss after thread hop</li>
+ *   <li>@KafkaListener returning Mono/Flux is silently ignored by Spring Kafka</li>
+ * </ul>
  */
 class RpeArchTest {
 
@@ -37,11 +39,13 @@ class RpeArchTest {
                 .importPackages("io.rpe");
     }
 
+    // ── Reactive / listener safety ───────────────────────────────────────────────────────────
+
     /**
      * All subscribe() calls must provide at minimum an onError handler.
      * subscribe() with no args swallows ALL exceptions silently — a violation produces
      * invisible missing alerts with no log, no metric, no observable failure.
-     *
+     * <p>
      * Rule: noClasses call subscribe() with zero arguments on Mono or Flux.
      */
     @Test
@@ -70,6 +74,8 @@ class RpeArchTest {
         rule.check(classes);
     }
 
+    // ── Concurrency / identity invariants ────────────────────────────────────────────────────
+
     /**
      * No synchronized methods anywhere in RPE — synchronized pins virtual-thread carriers
      * and silently degrades ALL VT concurrency across the JVM. Code that must lock uses
@@ -88,7 +94,7 @@ class RpeArchTest {
      * RandomUUID must not be used for alert_id generation.
      * alert_id = UUIDv5(NAMESPACE, eventId + ":" + ruleName) — deterministic and immutable.
      * Random UUIDs silently and permanently break processed_alerts dedup and replay safety (ADR-13).
-     *
+     * <p>
      * All alert_id generation must go through UuidV5.generate().
      */
     @Test
@@ -104,6 +110,8 @@ class RpeArchTest {
 
         rule.check(classes);
     }
+
+    // ── Service boundaries (ADR-17) ──────────────────────────────────────────────────────────
 
     /**
      * ADR-17 §7 Stage 4 — no cross-service package dependency. Services communicate only over
@@ -141,6 +149,8 @@ class RpeArchTest {
         rule.check(classes);
     }
 
+    // ── Error-boundary discipline ────────────────────────────────────────────────────────────
+
     /**
      * Broad catch (Exception/Throwable) is permitted ONLY inside a @BoundaryHandler code unit
      * (or class) — a deliberate last line of defense at a thread/loop/listener/scheduler frame.
@@ -159,16 +169,18 @@ class RpeArchTest {
             @Override
             public void check(JavaClass clazz, ConditionEvents events) {
                 boolean classMarked = clazz.isAnnotatedWith(BoundaryHandler.class);
+
                 for (JavaCodeUnit codeUnit : clazz.getCodeUnits()) {
                     boolean marked = classMarked || codeUnit.isAnnotatedWith(BoundaryHandler.class);
+
                     for (TryCatchBlock block : codeUnit.getTryCatchBlocks()) {
-                        // Only java.lang.Exception — NOT Throwable: try-with-resources desugars to
-                        // a synthetic catch(Throwable) for resource cleanup, which is not a real
-                        // broad catch. The codebase has zero hand-written Throwable catches
-                        // (the error-boundary discipline).
+                        // Only java.lang.Exception, NOT Throwable: try-with-resources desugars to
+                        // a synthetic cleanup catch, which is not a real broad catch. Codebase
+                        // has zero hand-written Throwable catches (error-boundary discipline).
                         boolean broad = block.getCaughtThrowables().stream()
                                 .map(JavaClass::getName)
                                 .anyMatch(n -> n.equals("java.lang.Exception"));
+
                         if (broad && !marked) {
                             events.add(SimpleConditionEvent.violated(codeUnit,
                                     "broad catch (Exception) without @BoundaryHandler at "

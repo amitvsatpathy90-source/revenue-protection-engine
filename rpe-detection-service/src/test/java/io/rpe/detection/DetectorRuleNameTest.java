@@ -6,12 +6,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Pins the RULE_NAME constants for each Detector implementation.
- *
+ * <p>
  * These strings are used verbatim in UUIDv5(NAMESPACE, eventId + ":" + ruleName()).
  * Changing a RULE_NAME after first deployment permanently breaks alert_id dedup for
  * previously-generated alert_ids: the same event now produces a different UUID,
  * and processed_alerts no longer catches the duplicate (replay safety broken).
- *
+ * <p>
  * Failing these tests means the change is a correctness regression, not a style preference.
  */
 class DetectorRuleNameTest {

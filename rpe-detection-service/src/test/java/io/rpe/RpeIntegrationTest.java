@@ -12,15 +12,20 @@ import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.extension.ExtensionContext;
+import org.junit.jupiter.api.extension.RegisterExtension;
+import org.junit.jupiter.api.extension.TestWatcher;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.redpanda.RedpandaContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -30,25 +35,24 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Testcontainers integration tests for the RPE core service (detection + alert-actioning).
- *
- * Post ADR-17 §7 Stage 1, the relay is a separate deployable (rpe-relay-service). Core's
- * pipeline now ends at the OUTBOX (detection's published interface); outbox → payment.alerts
- * is the relay service's responsibility and is tested there (its own exactly-once test,
- * formerly scenario 6 here). So detection-correctness scenarios assert at the outbox boundary,
- * not at processed_alerts.
- *
+ * <p>
+ * Post ADR-17 §7 Stage 1, core's pipeline ends at the outbox; outbox → payment.alerts
+ * is rpe-relay-service's responsibility. Detection scenarios therefore assert at the outbox boundary.
+ * <p>
  * Scenarios:
- *  1. Duplicate event within TTL → Redis dedup gate blocks replay → 1 outbox alert-intent row
- *  3. Poison payment event → routed to payment.events.DLT (partition never stalls)
- *  5. 100 events → all process without error (load + no pinning; inspect stdout for pins)
- *  7. Reprocessed event → same deterministic alert_id → outbox stays idempotent (one row)
- *  (2. Duplicate-alert dedup, 4. poison-alert DLT → moved to rpe-alert-service, ADR-17 Stage 2)
- *  (6. Relay exactly-once delivery → moved to rpe-relay-service, ADR-17 Stage 1)
+ * 1. Duplicate event within TTL → Redis dedup gate blocks replay → 1 outbox row
+ * 3. Poison payment event → routed to payment.events.DLT
+ * 5. 100 events drain fully → sentinel lands in outbox, state persisted, no drops
+ * 7. Reprocessed event → same deterministic alert_id → outbox stays idempotent
+ * 8. Hot-path in-flight counters converge when quiescent
+ * 9. Outbox row carries a well-formed W3C traceparent (ADR-25)
+ * (2, 4 moved to rpe-alert-service per ADR-17 Stage 2; 6 moved to rpe-relay-service per Stage 1)
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
@@ -64,6 +68,38 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers(disabledWithoutDocker = true)
 class RpeIntegrationTest {
 
+    private static final String PAYMENT_EVENTS_TOPIC = "payment.events";
+    private static final String PAYMENT_EVENTS_DLT = PAYMENT_EVENTS_TOPIC + ".DLT";
+    private static final int DLT_TIMEOUT_SECONDS = 20;
+
+    private static final Logger RP_LOG = LoggerFactory.getLogger("redpanda");
+
+    /**
+     * Logs filtered Redpanda ERROR/WARN lines once, on the first failed test.
+     */
+    @RegisterExtension
+    static final TestWatcher REDPANDA_LOGS_ON_FAILURE = new TestWatcher() {
+        private final AtomicBoolean dumped = new AtomicBoolean();
+
+        @Override
+        public void testFailed(ExtensionContext ctx, Throwable cause) {
+            if (!dumped.compareAndSet(false, true)) {
+                return;
+            }
+
+            List<String> lines = REDPANDA.getLogs().lines()
+                    .filter(line -> line.matches("(?i).*\\b(ERROR|WARN|WARNING)\\b.*")
+                            || line.toLowerCase(Locale.ROOT).contains("storage space alert"))
+                    .toList();
+
+            int from = Math.max(0, lines.size() - 50);
+            List<String> tail = lines.subList(from, lines.size());
+
+            RP_LOG.error("Redpanda logs after failure of {}:\n{}",
+                    ctx.getDisplayName(), String.join("\n", tail));
+        }
+    };
+
     @Container
     static final RedpandaContainer REDPANDA =
             new RedpandaContainer(DockerImageName.parse("docker.redpanda.com/redpandadata/redpanda:v24.1.11"));
@@ -77,9 +113,8 @@ class RpeIntegrationTest {
                             + "--maxmemory 96mb --maxmemory-policy volatile-lru --save \"\"");
 
     @Container
-    @SuppressWarnings("resource")
-    static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>(DockerImageName.parse("postgres:16.3"))
+    static final PostgreSQLContainer POSTGRES =
+            new PostgreSQLContainer(DockerImageName.parse("postgres:16.3"))
                     .withDatabaseName("rpe")
                     .withUsername("rpe")
                     .withPassword("rpe_test");
@@ -95,46 +130,40 @@ class RpeIntegrationTest {
         registry.add("DB_URL", POSTGRES::getJdbcUrl);
         registry.add("DB_USER", POSTGRES::getUsername);
         registry.add("DB_PASSWORD", POSTGRES::getPassword);
-        // Testcontainers Postgres has no 'detection' schema (no k8s bootstrap). Use public so
-        // Flyway can create outbox without the per-service schema setup.
+        // No 'detection' schema in Testcontainers Postgres; use public
         registry.add("spring.flyway.schemas", () -> "public");
         registry.add("spring.flyway.table", () -> "flyway_schema_history");
     }
 
-    @Autowired DataSource    dataSource;
-    @Autowired ObjectMapper  objectMapper;
-    @Autowired MeterRegistry meterRegistry;
-    @Autowired ReactiveStringRedisTemplate redisTemplate;
+    @Autowired
+    DataSource dataSource;
+    @Autowired
+    ObjectMapper objectMapper;
+    @Autowired
+    MeterRegistry meterRegistry;
+    @Autowired
+    ReactiveStringRedisTemplate redisTemplate;
 
-    // ── Scenario 1: Duplicate event within TTL → 1 outbox alert-intent row ────
+    // ── Scenario 1 ────────────────────────────────────────────────────────────
 
     @Test
     @DisplayName("1. Duplicate event within TTL → dedup gate blocks replay, 1 outbox row")
     void scenario1_deduplicateEventWithinTtl() throws Exception {
         String accountId = UUID.randomUUID().toString();
 
-        // Warm up velocity: two events that don't alert (priorCount < max-events=2)
-        sendPaymentEvent(UUID.randomUUID().toString(), accountId, 50.0, 37.7749, -122.4194, Instant.now().minusSeconds(2));
-        Thread.sleep(150);
-        sendPaymentEvent(UUID.randomUUID().toString(), accountId, 50.0, 37.7749, -122.4194, Instant.now().minusSeconds(1));
-        Thread.sleep(150);
+        sendVelocityWarmUp(accountId);
 
-        // Triggering event: priorCount=2 >= max-events=2 → velocity alert → outbox row
+        // priorCount=2 >= max-events=2 → velocity alert → outbox row
         String triggeringId = UUID.randomUUID().toString();
         sendPaymentEvent(triggeringId, accountId, 50.0, 37.7749, -122.4194, Instant.now());
 
-        // Detection's boundary is the outbox; relay delivery is rpe-relay-service's concern.
         Awaitility.await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
                 assertThat(countOutboxByEventId(triggeringId)).isEqualTo(1));
 
-        // Replay the triggering event — Redis dedup gate blocks it (TTL=300s) → no new row.
+        // Replay: Redis dedup gate (TTL=300s) must block it
         sendPaymentEvent(triggeringId, accountId, 50.0, 37.7749, -122.4194, Instant.now());
 
-        // Barrier, not a fixed sleep: a sentinel on the SAME account key rides the same partition
-        // and, sent after the replay, is processed by the per-account lane strictly after it. When
-        // the sentinel's own outbox row lands, the replay has already had its chance — a broken
-        // dedup gate would have written the duplicate by now. This makes the negative assertion a
-        // real check instead of a race a slow CI runner passes vacuously.
+        // Sentinel on same partition is processed after the replay; its row is the barrier
         String sentinelId = UUID.randomUUID().toString();
         sendPaymentEvent(sentinelId, accountId, 50.0, 37.7749, -122.4194, Instant.now());
         Awaitility.await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
@@ -143,56 +172,61 @@ class RpeIntegrationTest {
         assertThat(countOutboxByEventId(triggeringId)).isEqualTo(1);
     }
 
-    // ── Scenario 3: Poison payment event → payment.events.DLT ───────────────
+    // ── Scenario 3 ────────────────────────────────────────────────────────────
 
     @Test
     @DisplayName("3. Poison payment event (invalid JSON) → payment.events.DLT, consumer unblocked")
     void scenario3_poisonPaymentEventRoutedToDlt() throws Exception {
-        String dltTopic = "payment.events.DLT";
-        sendRawString("payment.events", UUID.randomUUID().toString(), "NOT_VALID_JSON");
+        sendRawPaymentEvent(UUID.randomUUID().toString(), "NOT_VALID_JSON");
 
-        List<String> dltMessages = consumeFromTopicWithTimeout(dltTopic, 1, 20);
+        List<String> dltMessages = consumeFromDlt();
         assertThat(dltMessages).hasSize(1);
 
-        // Consumer must still be able to process a valid event after the poison message
-        String eventId   = UUID.randomUUID().toString();
+        // Consumer must still process a valid event after the poison message
+        String eventId = UUID.randomUUID().toString();
         String accountId = UUID.randomUUID().toString();
         sendPaymentEvent(eventId, accountId, 10.0, 37.0, -122.0, Instant.now());
         Awaitility.await().atMost(Duration.ofSeconds(15)).untilAsserted(() ->
                 assertThat(eventWasProcessed(accountId)).isTrue());
     }
 
-    // ── Scenario 5: 100 events process without error ─────────────────────────
+    // ── Scenario 5 ────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("5. 100 events process without error (verify VT pinning via -Djdk.tracePinnedThreads)")
+    @DisplayName("5. 100 events fully drain: sentinel lands in outbox, state persisted, no drops")
     void scenario5_noErrorsUnderLoad() throws Exception {
         String accountId = UUID.randomUUID().toString();
+        double submittedBefore = counter("rpe.hotpath.alerts.submitted");
 
         for (int i = 0; i < 100; i++) {
-            String eventId = UUID.randomUUID().toString();
-            double amount = 50.0 + (i * 0.5);
-            sendPaymentEvent(eventId, accountId, amount, 37.7749, -122.4194,
-                    Instant.now().minusSeconds(100L - i));
+            sendPaymentEvent(UUID.randomUUID().toString(), accountId, 50.0 + (i * 0.5),
+                    37.7749, -122.4194, Instant.now().minusSeconds(100L - i));
         }
 
-        // All events should process within 30s — success = no unhandled exceptions
-        Awaitility.await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
-                assertThat(getOutboxPendingCount()).isGreaterThanOrEqualTo(0)); // liveness check
+        // Same key → same partition; sentinel is processed after all 100
+        String sentinelId = UUID.randomUUID().toString();
+        sendPaymentEvent(sentinelId, accountId, 50.0, 37.7749, -122.4194, Instant.now());
+
+        Awaitility.await().atMost(Duration.ofSeconds(60)).untilAsserted(() ->
+                assertThat(countOutboxByEventId(sentinelId)).isEqualTo(1));
+
+        assertThat(eventWasProcessed(accountId)).isTrue();                // Welford state in Redis
+        assertThat(countOutboxByAccount(accountId)).isGreaterThan(0);     // alerts persisted
+        assertThat(counter("rpe.hotpath.alerts.submitted")).isGreaterThan(submittedBefore);
+        Awaitility.await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(counter("rpe.hotpath.alerts.buffered"))
+                        .isEqualTo(counter("rpe.hotpath.alerts.submitted")));
+        assertThat(counter("rpe.outbox.dropped")).isZero();               // no backpressure drops
     }
 
-    // ── Scenario 7: Reprocessed event → same alert_id, outbox stays idempotent ─
+    // ── Scenario 7 ────────────────────────────────────────────────────────────
 
     @Test
     @DisplayName("7. Reprocessed event → same deterministic alert_id, outbox idempotent (one row)")
     void scenario7_reprocessedEventSameAlertId() throws Exception {
         String accountId = UUID.randomUUID().toString();
 
-        // Warm up velocity, then a triggering event → exactly one velocity alert → one outbox row
-        sendPaymentEvent(UUID.randomUUID().toString(), accountId, 50.0, 37.7749, -122.4194, Instant.now().minusSeconds(2));
-        Thread.sleep(150);
-        sendPaymentEvent(UUID.randomUUID().toString(), accountId, 50.0, 37.7749, -122.4194, Instant.now().minusSeconds(1));
-        Thread.sleep(150);
+        sendVelocityWarmUp(accountId);
         String triggeringId = UUID.randomUUID().toString();
         sendPaymentEvent(triggeringId, accountId, 50.0, 37.7749, -122.4194, Instant.now());
 
@@ -200,26 +234,20 @@ class RpeIntegrationTest {
                 assertThat(countOutboxByEventId(triggeringId)).isEqualTo(1));
         long rowsBefore = countOutboxByAccount(accountId);
 
-        // Reprocess the SAME triggering event: deterministic UUIDv5 alert_id means the outbox
-        // INSERT (ON CONFLICT DO NOTHING on id) + the Redis dedup gate keep it to one row.
+        // Same event again: UUIDv5 alert_id + ON CONFLICT DO NOTHING + dedup gate → no new row
         sendPaymentEvent(triggeringId, accountId, 50.0, 37.7749, -122.4194, Instant.now());
 
-        // Barrier, not a fixed sleep: a sentinel on the same account/partition, sent after the
-        // reprocess, is handled strictly after it; its own outbox row is the observable that the
-        // reprocess has already been consumed. Replaces a fixed 3s sleep a slow runner could pass
-        // vacuously (reprocess not yet consumed).
+        // Sentinel row proves the reprocess was already consumed
         String sentinelId = UUID.randomUUID().toString();
         sendPaymentEvent(sentinelId, accountId, 50.0, 37.7749, -122.4194, Instant.now());
         Awaitility.await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
                 assertThat(countOutboxByEventId(sentinelId)).isEqualTo(1));
 
-        // The reprocess added NO row (dedup + ON CONFLICT); only the sentinel did. So the reprocessed
-        // event still maps to exactly one outbox row, and the account gained exactly one row overall.
         assertThat(countOutboxByEventId(triggeringId)).isEqualTo(1);
-        assertThat(countOutboxByAccount(accountId)).isEqualTo(rowsBefore + 1);
+        assertThat(countOutboxByAccount(accountId)).isEqualTo(rowsBefore + 1); // sentinel only
     }
 
-    // ── Scenario 8: in-flight gap counters balance when quiescent ─────────────
+    // ── Scenario 8 ────────────────────────────────────────────────────────────
 
     @Test
     @DisplayName("8. hotpath in-flight counters: submitted increments and converges to buffered (no drops)")
@@ -227,69 +255,69 @@ class RpeIntegrationTest {
         double submittedBefore = counter("rpe.hotpath.alerts.submitted");
 
         String accountId = UUID.randomUUID().toString();
-        // Warm velocity (max-events=2), then trigger exactly one alert → one outbox row.
-        sendPaymentEvent(UUID.randomUUID().toString(), accountId, 50.0, 37.7749, -122.4194, Instant.now().minusSeconds(2));
-        Thread.sleep(150);
-        sendPaymentEvent(UUID.randomUUID().toString(), accountId, 50.0, 37.7749, -122.4194, Instant.now().minusSeconds(1));
-        Thread.sleep(150);
+        sendVelocityWarmUp(accountId);
         String triggeringId = UUID.randomUUID().toString();
         sendPaymentEvent(triggeringId, accountId, 50.0, 37.7749, -122.4194, Instant.now());
 
-        // The alert must reach the outbox (its intent passed through submit() → buffered).
         Awaitility.await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
                 assertThat(countOutboxByEventId(triggeringId)).isEqualTo(1));
 
-        // submitted strictly advanced: the hot path handed at least one alert to the executor.
         assertThat(counter("rpe.hotpath.alerts.submitted")).isGreaterThan(submittedBefore);
 
-        // The volatile in-flight gap (submitted - buffered) is transient by design; once the
-        // system is quiescent and Postgres is healthy, every submitted alert was buffered.
-        // Awaitility absorbs the async jdbcScheduler hop between the two increments.
+        // In-flight gap is transient; Awaitility absorbs the async jdbcScheduler hop
         Awaitility.await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
                 assertThat(counter("rpe.hotpath.alerts.buffered"))
                         .isEqualTo(counter("rpe.hotpath.alerts.submitted")));
 
-        // No alert intent was dropped on a healthy Postgres (queue never saturated).
         assertThat(counter("rpe.outbox.dropped")).isZero();
     }
 
-    // ── Scenario 9: ADR-25 outbox trace stitch — alert row carries the consume-span traceparent ─
+    // ── Scenario 9 ────────────────────────────────────────────────────────────
 
     @Test
     @DisplayName("9. Alert's outbox row carries a well-formed W3C traceparent (ADR-25 outbox trace stitch)")
     void scenario9_alertRowCarriesTraceparent() throws Exception {
         String accountId = UUID.randomUUID().toString();
 
-        // Warm velocity (max-events=2), then trigger exactly one velocity alert → one outbox row.
-        sendPaymentEvent(UUID.randomUUID().toString(), accountId, 50.0, 37.7749, -122.4194, Instant.now().minusSeconds(2));
-        Thread.sleep(150);
-        sendPaymentEvent(UUID.randomUUID().toString(), accountId, 50.0, 37.7749, -122.4194, Instant.now().minusSeconds(1));
-        Thread.sleep(150);
+        sendVelocityWarmUp(accountId);
         String triggeringId = UUID.randomUUID().toString();
         sendPaymentEvent(triggeringId, accountId, 50.0, 37.7749, -122.4194, Instant.now());
 
         Awaitility.await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
                 assertThat(countOutboxByEventId(triggeringId)).isEqualTo(1));
 
-        // The captured consume-span context is persisted as a well-formed W3C traceparent — the
-        // input the relay restores to continue the SAME trace across the durable outbox gap.
-        // (The test producer is un-instrumented, so the consume span is a fresh root — still
-        // sampled at probability 1.0, so traceparent is present and flag = 01.)
+        // Un-instrumented producer → consume span is a fresh sampled root (flag 01)
         assertThat(traceparentForEventId(triggeringId))
                 .as("alert outbox row must carry the consume-span traceparent")
                 .matches("^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$");
     }
 
-    /** Reads a counter's current value, returning 0.0 if it has not been registered yet. */
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Reads a counter's current value; 0.0 if not yet registered.
+     */
     private double counter(String name) {
         var c = meterRegistry.find(name).counter();
         return c == null ? 0.0 : c.count();
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    /**
+     * Sends two non-alerting events so priorCount stays below velocity max-events=2.
+     * Same account key → same partition → processed in send order.
+     */
+    private void sendVelocityWarmUp(String accountId) throws Exception {
+        sendPaymentEvent(UUID.randomUUID().toString(), accountId, 50.0,
+                37.7749, -122.4194, Instant.now().minusSeconds(2));
+        sendPaymentEvent(UUID.randomUUID().toString(), accountId, 50.0,
+                37.7749, -122.4194, Instant.now().minusSeconds(1));
+    }
 
+    /**
+     * Serializes a payment event and publishes it to payment.events, keyed by account.
+     */
     private void sendPaymentEvent(String eventId, String accountId, double amount,
-                                   double lat, double lon, Instant timestamp) throws Exception {
+                                  double lat, double lon, Instant timestamp) throws Exception {
         String payload = objectMapper.writeValueAsString(Map.of(
                 "eventId", eventId,
                 "accountId", accountId,
@@ -299,20 +327,26 @@ class RpeIntegrationTest {
                 "timestamp", timestamp.toString(),
                 "schemaVersion", "1"
         ));
-        sendRawString("payment.events", accountId, payload);
+        sendRawPaymentEvent(accountId, payload);
     }
 
-    private void sendRawString(String topic, String key, String value) throws Exception {
+    /**
+     * Publishes a raw string value to payment.events and blocks until acked.
+     */
+    private void sendRawPaymentEvent(String key, String value) throws Exception {
         Properties props = new Properties();
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, REDPANDA.getBootstrapServers());
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         try (var producer = new KafkaProducer<String, String>(props)) {
-            producer.send(new ProducerRecord<>(topic, key, value)).get(10, TimeUnit.SECONDS);
+            producer.send(new ProducerRecord<>(PAYMENT_EVENTS_TOPIC, key, value)).get(10, TimeUnit.SECONDS);
         }
     }
 
-    private List<String> consumeFromTopicWithTimeout(String topic, int minMessages, int timeoutSeconds) {
+    /**
+     * Reads payment.events.DLT from earliest until the minimum count or timeout.
+     */
+    private List<String> consumeFromDlt() {
         Properties props = new Properties();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, REDPANDA.getBootstrapServers());
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "test-consumer-" + UUID.randomUUID());
@@ -322,9 +356,9 @@ class RpeIntegrationTest {
 
         List<String> messages = new ArrayList<>();
         try (var consumer = new KafkaConsumer<String, String>(props)) {
-            consumer.subscribe(List.of(topic));
-            long deadline = System.currentTimeMillis() + (timeoutSeconds * 1000L);
-            while (messages.size() < minMessages && System.currentTimeMillis() < deadline) {
+            consumer.subscribe(List.of(PAYMENT_EVENTS_DLT));
+            long deadline = System.currentTimeMillis() + (DLT_TIMEOUT_SECONDS * 1000L);
+            while (messages.isEmpty() && System.currentTimeMillis() < deadline) {
                 var records = consumer.poll(Duration.ofMillis(500));
                 for (ConsumerRecord<String, String> rec : records) {
                     messages.add(rec.value());
@@ -334,7 +368,9 @@ class RpeIntegrationTest {
         return messages;
     }
 
-    /** Detection's output boundary: alert-intent rows in the outbox, keyed by source event. */
+    /**
+     * Counts outbox alert-intent rows for a source event (detection's output boundary).
+     */
     private int countOutboxByEventId(String eventId) throws Exception {
         try (Connection conn = dataSource.getConnection();
              var ps = conn.prepareStatement(
@@ -346,7 +382,9 @@ class RpeIntegrationTest {
         }
     }
 
-    /** The W3C trace context persisted on an alert's outbox row (ADR-25), keyed by source event. */
+    /**
+     * Returns the W3C traceparent persisted on an alert's outbox row (ADR-25).
+     */
     private String traceparentForEventId(String eventId) throws Exception {
         try (Connection conn = dataSource.getConnection();
              var ps = conn.prepareStatement(
@@ -358,6 +396,9 @@ class RpeIntegrationTest {
         }
     }
 
+    /**
+     * Counts all outbox rows for an account.
+     */
     private long countOutboxByAccount(String accountId) throws Exception {
         try (Connection conn = dataSource.getConnection();
              var ps = conn.prepareStatement(
@@ -369,17 +410,11 @@ class RpeIntegrationTest {
         }
     }
 
-    private boolean eventWasProcessed(String accountId) throws Exception {
-        // A processed event leaves Welford state in Redis (stats:{accountId} HSET).
+    /**
+     * True if Welford state (stats:{accountId}) exists in Redis, i.e. the event was processed.
+     */
+    private boolean eventWasProcessed(String accountId) {
         return Boolean.TRUE.equals(
                 redisTemplate.hasKey("stats:" + accountId).block(Duration.ofSeconds(2)));
-    }
-
-    private long getOutboxPendingCount() throws Exception {
-        try (Connection conn = dataSource.getConnection();
-             var stmt = conn.createStatement();
-             var rs = stmt.executeQuery("SELECT COUNT(*) FROM outbox WHERE status='PENDING'")) {
-            return rs.next() ? rs.getLong(1) : 0L;
-        }
     }
 }

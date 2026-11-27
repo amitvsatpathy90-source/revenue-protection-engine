@@ -15,7 +15,7 @@ import static org.mockito.Mockito.mock;
 /**
  * Pins the payment container's offset-commit contract.
  *
- * Acks are issued from per-account lane VTs in COMPLETION order, not offset order (a slow
+ * <p>Acks are issued from per-account lane VTs in COMPLETION order, not offset order (a slow
  * lane — rate-limit park, outbox backpressure — lets a later offset ack first). The Spring
  * Kafka reference is explicit: with {@code AckMode.MANUAL_IMMEDIATE} "the acknowledgments
  * must be acknowledged in order, because Kafka does not maintain state for each record,

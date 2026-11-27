@@ -14,7 +14,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Runs the real jdbcScheduler pool + saturation policy; other outbox tests use Schedulers.immediate(). */
+/**
+ * Runs the real jdbcScheduler pool + saturation policy; other outbox tests use Schedulers.immediate().
+ */
 class SchedulerConfigJdbcPolicyTest {
 
     // Mirrors SchedulerConfig: 20 workers + 500 queue slots.
@@ -89,7 +91,8 @@ class SchedulerConfigJdbcPolicyTest {
         var done = new CountDownLatch(1);
         Thread submitter = Thread.ofVirtual().start(() -> {
             try {
-                jdbc.schedule(() -> { });
+                jdbc.schedule(() -> {
+                });
             } catch (Throwable t) {
                 err.set(t);
             }
@@ -112,7 +115,8 @@ class SchedulerConfigJdbcPolicyTest {
         var done = new CountDownLatch(1);
         Thread submitter = Thread.ofVirtual().start(() -> {
             try {
-                jdbc.schedule(() -> { });
+                jdbc.schedule(() -> {
+                });
             } catch (Throwable t) {
                 err.set(t);
                 flag.set(Thread.currentThread().isInterrupted());
@@ -140,7 +144,8 @@ class SchedulerConfigJdbcPolicyTest {
         jdbc.schedule(() -> {
             await(go);
             try {
-                jdbc.schedule(() -> { });
+                jdbc.schedule(() -> {
+                });
             } catch (Throwable t) {
                 err.set(t);
             }
@@ -163,7 +168,8 @@ class SchedulerConfigJdbcPolicyTest {
         var returned = new CountDownLatch(1);
         Thread s = Thread.ofVirtual().start(() -> {
             try {
-                jdbc.schedule(() -> { });
+                jdbc.schedule(() -> {
+                });
                 returned.countDown();
             } catch (Throwable t) {
                 err.set(t);

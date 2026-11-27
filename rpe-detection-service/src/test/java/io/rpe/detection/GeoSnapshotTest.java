@@ -2,12 +2,11 @@ package io.rpe.detection;
 
 import org.junit.jupiter.api.Test;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.*;
 
 /**
  * Pins the GeoSnapshot constructor guards (ADR-14).
- *
+ * <p>
  * Guard ORDER is load-bearing: NaN before range (NaN comparisons are silently false,
  * so the range check alone passes NaN through). Exception messages must describe the
  * violation shape (boolean flags) — never coordinate values (PII rule).
@@ -24,8 +23,10 @@ class GeoSnapshotTest {
 
     @Test
     void boundaryCoordinatesAreValid() {
-        new GeoSnapshot(90.0, 180.0, 1L);
-        new GeoSnapshot(-90.0, -180.0, 1L);
+        assertThatCode(() -> {
+            new GeoSnapshot(90.0, 180.0, 1L);
+            new GeoSnapshot(-90.0, -180.0, 1L);
+        }).doesNotThrowAnyException();
     }
 
     @Test

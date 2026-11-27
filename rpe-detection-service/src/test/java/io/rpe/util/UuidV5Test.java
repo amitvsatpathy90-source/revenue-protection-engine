@@ -16,7 +16,7 @@ class UuidV5Test {
     @Test
     void sameInputProducesSameUuid() {
         String name = "evt-123:velocity";
-        UUID first  = UuidV5.generate(UuidV5.RPE_NAMESPACE, name);
+        UUID first = UuidV5.generate(UuidV5.RPE_NAMESPACE, name);
         UUID second = UuidV5.generate(UuidV5.RPE_NAMESPACE, name);
 
         assertThat(first).isEqualTo(second);

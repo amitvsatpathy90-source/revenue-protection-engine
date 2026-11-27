@@ -6,5 +6,7 @@
 -- Additive + nullable (column schema evolution): pre-existing PENDING rows and any producer running
 -- without tracing simply carry NULL, and the relay starts a fresh trace for them. No backfill.
 -- The relay's test-fixture copy (V1__outbox_contract.sql) mirrors these columns.
-ALTER TABLE outbox ADD COLUMN traceparent TEXT;
-ALTER TABLE outbox ADD COLUMN tracestate  TEXT;
+ALTER TABLE outbox
+    ADD COLUMN traceparent TEXT;
+ALTER TABLE outbox
+    ADD COLUMN tracestate TEXT;

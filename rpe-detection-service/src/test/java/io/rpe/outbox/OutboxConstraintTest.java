@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
@@ -16,7 +16,7 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
 /**
  * Pins the outbox id PRIMARY KEY against schema drift.
- *
+ * <p>
  * Raw inserts deliberately bypass ON CONFLICT so a weakened constraint cannot be masked
  * by application-level duplicate handling. Only V1 is migrated; later migrations are
  * unrelated to this persistence invariant.
@@ -25,8 +25,8 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 public class OutboxConstraintTest {
 
     @Container
-    static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>(DockerImageName.parse("postgres:16.3"))
+    static final PostgreSQLContainer POSTGRES =
+            new PostgreSQLContainer(DockerImageName.parse("postgres:16.3"))
                     .withDatabaseName("rpe")
                     .withUsername("rpe")
                     .withPassword("rpe_test");

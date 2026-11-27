@@ -7,7 +7,7 @@ import java.util.Objects;
  */
 public record DetectionResult(Verdict verdict, String ruleName, String reason) {
 
-    public enum Verdict { ALERT, CLEAN }
+    public enum Verdict {ALERT, CLEAN}
 
     public static DetectionResult clean(String reason) {
         return new DetectionResult(Verdict.CLEAN, null, reason);
@@ -23,5 +23,7 @@ public record DetectionResult(Verdict verdict, String ruleName, String reason) {
         return new DetectionResult(Verdict.ALERT, ruleName, reason);
     }
 
-    public boolean isAlert() { return verdict == Verdict.ALERT; }
+    public boolean isAlert() {
+        return verdict == Verdict.ALERT;
+    }
 }

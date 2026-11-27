@@ -18,15 +18,18 @@ import java.util.concurrent.atomic.AtomicLong;
  * {@code rpe.redis.used_memory.bytes} / {@code rpe.redis.maxmemory.bytes} — the ADR-27 memory
  * watermark. Detection is the sole Redis owner (the service-independence discipline), so it owns this gauge.
  *
- * Why it exists: under {@code volatile-lru}, memory pressure evicts the TTL'd dedup/vel/geo
- * working set FIRST — detection quality decays silently (missed velocity/geo alerts look like a
- * quiet day) long before Redis errors. The {@code RpeRedisMemoryHigh} rule on these gauges is the
- * only early signal for that decay; by the time the gate throws OOM write errors and the {@code
- * redis} CB opens, the damage is already hours old. ADR-27's sliding stats TTL removes the
+ * <p>Why it exists: under {@code volatile-lru}, memory pressure evicts the TTL'd
+ * dedup/vel/geo working set FIRST — detection quality decays silently
+ * (missed velocity/geo alerts look like a quiet day) long before Redis errors.
+ *
+ * <p>The {@code RpeRedisMemoryHigh} rule on these gauges is the only early signal for that decay;
+ * by the time the gate throws OOM write errors and the {@code redis} CB opens,
+ * the damage is already hours old. ADR-27's sliding stats TTL removes the
  * unbounded-growth wedge, but the watermark is still the operational tripwire for sizing.
  *
- * Poll failures increment {@code rpe.redis.info.poll_failures} (the Bundle-1 false-healthy
- * lesson: a frozen gauge must never look healthy) — {@code RpeRedisInfoPollFailing} alerts on it.
+ * <p>Poll failures increment {@code rpe.redis.info.poll_failures}
+ * (the Bundle-1 false-healthy lesson: a frozen gauge must never look healthy) —
+ * {@code RpeRedisInfoPollFailing} alerts on it.
  */
 @Component
 @BoundaryHandler("observability-poll-must-not-throw into the scheduling thread; a metric refresh failure logs and the next scheduled run retries")
@@ -57,9 +60,12 @@ public class RedisMemoryMetrics {
     public void refresh() {
         try {
             // No publishOn here, deliberately: the Mono is materialized by block() on THIS
-            // scheduled platform thread and has no downstream operators, so nothing user-supplied
-            // executes on the Lettuce I/O thread — the hazard the reactive-pipeline discipline
-            // rule guards against on the hot path. A publishOn would be dead code in this shape.
+            // scheduled platform thread and has no downstream operators.
+            //
+            // So nothing user-supplied executes on the Lettuce I/O thread — the hazard the
+            // reactive-pipeline discipline rule guards against on the hot path.
+            //
+            // A publishOn would be dead code in this shape.
             Properties info = redis.execute(conn -> conn.serverCommands().info("memory"))
                     .next()
                     .block(POLL_TIMEOUT);
@@ -76,3 +82,4 @@ public class RedisMemoryMetrics {
         }
     }
 }
+

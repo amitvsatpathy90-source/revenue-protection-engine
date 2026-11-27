@@ -2,10 +2,12 @@ package io.rpe.consumer;
 
 import io.github.resilience4j.bulkhead.Bulkhead;
 import io.github.resilience4j.bulkhead.BulkheadRegistry;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.reactor.bulkhead.operator.BulkheadOperator;
 import io.github.resilience4j.reactor.circuitbreaker.operator.CircuitBreakerOperator;
+import io.rpe.redis.RedisGate;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
@@ -18,22 +20,24 @@ import java.util.List;
 /**
  * Distributed token-bucket rate limiter backed by an atomic Redis Lua script (ADR-24).
  *
- * One round-trip per acquire returns {@link Decision}{@code (allowed, waitMs)}. This is the
+ * <p>One round-trip per acquire returns {@link Decision}{@code (allowed, waitMs)}. This is the
  * <em>primary</em> path; {@link RateLimiterService} owns the throttle-wait loop, the
  * classification-driven rate, and the degrade-to-local fallback when this boundary is
  * unavailable.
  *
- * <b>Per-boundary Resilience4j</b> (no global defaults — Architecture Spec): its OWN {@code ratelimit}
- * CircuitBreaker + Bulkhead, distinct from the gate's {@code redis} instances. Sharing the
- * gate's CB would conflate a rate-limit hiccup with detection-core health and could open the
- * gate CB (buffering events) for a non-detection reason. When the {@code ratelimit} CB is open,
- * {@code CallNotPermittedException} short-circuits each call with no Redis round-trip — the
- * caller degrades to the local limiter immediately (fast-fail, no per-event timeout).
+ * <p><b>Per-boundary Resilience4j</b> (no global defaults — Architecture Spec): its OWN
+ * {@code ratelimit} CircuitBreaker + Bulkhead, distinct from the gate's {@code redis} instances.
+ * Sharing the gate's CB would conflate a rate-limit hiccup with detection-core health and could
+ * open the gate CB (buffering events) for a non-detection reason. When the {@code ratelimit} CB
+ * is open, {@code CallNotPermittedException} short-circuits each call with no Redis round-trip —
+ * the caller degrades to the local limiter immediately (fast-fail, no per-event timeout).
  */
 @Component
 public class DistributedRateLimiter {
 
-    /** Bounded wait for a single token-bucket round-trip — a hung Redis must not wedge the lane. */
+    /**
+     * Bounded wait for a single token-bucket round-trip — a hung Redis must not wedge the lane.
+     */
     private static final Duration CALL_TIMEOUT = Duration.ofMillis(500);
 
     private final ReactiveStringRedisTemplate redis;
@@ -50,23 +54,22 @@ public class DistributedRateLimiter {
             Scheduler laneScheduler,
             CircuitBreakerRegistry cbRegistry,
             BulkheadRegistry bulkheadRegistry) {
-        this.redis           = redis;
+        this.redis = redis;
         this.rateLimitScript = rateLimitScript;
-        this.laneScheduler   = laneScheduler;
-        this.circuitBreaker  = cbRegistry.circuitBreaker("ratelimit");
-        this.bulkhead        = bulkheadRegistry.bulkhead("ratelimit");
+        this.laneScheduler = laneScheduler;
+        this.circuitBreaker = cbRegistry.circuitBreaker("ratelimit");
+        this.bulkhead = bulkheadRegistry.bulkhead("ratelimit");
     }
 
     /**
      * One token-bucket evaluation. Blocks on the lane VT (which parks without pinning a carrier,
      * the same model as {@link RedisGate} and {@code AccountClassificationService}).
      *
-     * @throws io.github.resilience4j.circuitbreaker.CallNotPermittedException when the
-     *         {@code ratelimit} CB is open — the caller treats this as "distributed unavailable"
-     *         and degrades to the local limiter.
-     * @throws RuntimeException on timeout / Redis error — also a degrade-to-local signal.
+     * @throws CallNotPermittedException when the
+     *                                                                         {@code ratelimit} CB is open — the caller treats this as "distributed unavailable"
+     *                                                                         and degrades to the local limiter.
+     * @throws RuntimeException                                                on timeout / Redis error — also a degrade-to-local signal.
      */
-    @SuppressWarnings("unchecked")
     public Decision tryConsume(String accountId, double ratePerSec, long keyTtlMs) {
         // No caller clock: rate_limit.lua reads redis.call('TIME') so every replica refills off
         // ONE server clock (ADR-24 R2). Passing System.currentTimeMillis() here reintroduced
@@ -80,7 +83,7 @@ public class DistributedRateLimiter {
                 .next()
                 // MANDATORY: hop off the Lettuce I/O thread before mapping (the reactive-pipeline discipline).
                 .publishOn(laneScheduler)
-                .map(raw -> toDecision((List<Object>) raw))
+                .map(this::toDecision)
                 .transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
                 .transformDeferred(BulkheadOperator.of(bulkhead));
 
@@ -95,12 +98,17 @@ public class DistributedRateLimiter {
     }
 
     private Decision toDecision(List<Object> raw) {
+
         // Lua integer replies map to Long. allowed ∈ {0,1}; waitMs ≥ 0.
         long allowed = ((Number) raw.get(0)).longValue();
-        long waitMs  = ((Number) raw.get(1)).longValue();
+        long waitMs = ((Number) raw.get(1)).longValue();
+
         return new Decision(allowed == 1L, waitMs);
     }
 
-    /** Outcome of one token-bucket evaluation. {@code waitMs} is 0 when {@code allowed}. */
-    public record Decision(boolean allowed, long waitMs) {}
+    /**
+     * Outcome of one token-bucket evaluation. {@code waitMs} is 0 when {@code allowed}.
+     */
+    public record Decision(boolean allowed, long waitMs) {
+    }
 }

@@ -34,33 +34,44 @@ import static org.mockito.Mockito.when;
 
 /**
  * Lifecycle of the consumer's {@code partition → account_id} index.
- *
+ * <p>
  * The index is the source of truth for ADR-09 partition-scoped lane drain, and is bounded to
  * the (bounded) Caffeine lane cache by pruning an account the moment its lane is evicted. These
  * tests drive the real {@code consume} / {@code onPartitionsRevoked} logic with mocked
  * collaborators and assert the three index behaviours:
- *
- *   1. an account is indexed under its partition when an event is consumed;
- *   2. an account is pruned from the index when its lane is evicted (the unbounded-growth fix);
- *   3. a revoke drains ONLY the revoked partition's accounts — never lanes on still-assigned
- *      partitions (ADR-09: draining all lanes would stall active partitions).
+ * <p>
+ * 1. an account is indexed under its partition when an event is consumed;
+ * 2. an account is pruned from the index when its lane is evicted (the unbounded-growth fix);
+ * 3. a revoke drains ONLY the revoked partition's accounts — never lanes on still-assigned
+ * partitions (ADR-09: draining all lanes would stall active partitions).
  */
 @ExtendWith(MockitoExtension.class)
 class PaymentEventConsumerIndexTest {
 
     private static final String TOPIC = "payment.events";
 
-    @Mock RpeProperties props;
-    @Mock LaneExecutorService laneExecutorService;
-    @Mock RateLimiterService rateLimiterService;
-    @Mock RedisGate redisGate;
-    @Mock OutboxBatchWriter outboxBatchWriter;
-    @Mock CbFallbackHandler cbFallbackHandler;
-    @Mock ObjectMapper objectMapper;
-    @Mock Scheduler jdbcScheduler;
-    @Mock Validator validator;
-    @Mock DeadLetterPublishingRecoverer dltRecoverer;
-    @Mock io.rpe.observability.TraceContextWriter traceContextWriter;
+    @Mock
+    RpeProperties props;
+    @Mock
+    LaneExecutorService laneExecutorService;
+    @Mock
+    RateLimiterService rateLimiterService;
+    @Mock
+    RedisGate redisGate;
+    @Mock
+    OutboxBatchWriter outboxBatchWriter;
+    @Mock
+    CbFallbackHandler cbFallbackHandler;
+    @Mock
+    ObjectMapper objectMapper;
+    @Mock
+    Scheduler jdbcScheduler;
+    @Mock
+    Validator validator;
+    @Mock
+    DeadLetterPublishingRecoverer dltRecoverer;
+    @Mock
+    io.rpe.observability.TraceContextWriter traceContextWriter;
 
     private PaymentEventConsumer newConsumer() {
         return new PaymentEventConsumer(
@@ -70,8 +81,10 @@ class PaymentEventConsumerIndexTest {
                 new SimpleMeterRegistry(), traceContextWriter);
     }
 
-    /** A record on {@code partition} keyed by {@code accountId}; passes validation (mocked). */
-    private ConsumerRecord<String, PaymentEvent> record(int partition, String accountId) {
+    /**
+     * A record on {@code partition} keyed by {@code accountId}; passes validation (mocked).
+     */
+    private ConsumerRecord<String, PaymentEvent> consumerRecord(int partition, String accountId) {
         PaymentEvent event = new PaymentEvent(
                 "evt-" + accountId, accountId,
                 new BigDecimal("10.00"), new BigDecimal("1.0"), new BigDecimal("1.0"),
@@ -95,9 +108,9 @@ class PaymentEventConsumerIndexTest {
         when(laneExecutorService.getOrCreate("B")).thenReturn(laneB);
 
         // A and B land on partition 0; C on partition 1 — each indexed on consume.
-        consumer.consume(record(0, "A"), ack);
-        consumer.consume(record(0, "B"), ack);
-        consumer.consume(record(1, "C"), ack);
+        consumer.consume(consumerRecord(0, "A"), ack);
+        consumer.consume(consumerRecord(0, "B"), ack);
+        consumer.consume(consumerRecord(1, "C"), ack);
 
         consumer.onPartitionsRevoked(List.of(new TopicPartition(TOPIC, 0)));
 
@@ -127,8 +140,8 @@ class PaymentEventConsumerIndexTest {
         verify(laneExecutorService).onEviction(captor.capture());
         Consumer<String> evictionListener = captor.getValue();
 
-        consumer.consume(record(0, "A"), ack);
-        consumer.consume(record(0, "B"), ack);
+        consumer.consume(consumerRecord(0, "A"), ack);
+        consumer.consume(consumerRecord(0, "B"), ack);
 
         // A's lane is evicted from the bounded Caffeine cache → index must drop A.
         evictionListener.accept("A");
