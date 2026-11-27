@@ -14,11 +14,12 @@ import org.springframework.stereotype.Component;
  * Marks the start of a graceful shutdown (ADR-22). Per-service copy — no shared jar
  * (the service-independence discipline), symmetric with {@code Pii} / {@code KafkaSecurity} / {@code BoundaryHandler}.
  *
- * The alert consumer is a SYNCHRONOUS listener: the Kafka container's stop() already awaits the
- * in-flight {@code consume()} (insert → ack) before the container terminates, so no custom drain
- * bean is needed here. This listener adds the same readiness-flip + observability the other
- * services have: {@link ContextClosedEvent} fires first → readiness {@link ReadinessState#REFUSING_TRAFFIC}
- * → pod removed from Service endpoints before the container drains. Liveness stays UP.
+ * <p>The alert consumer is a SYNCHRONOUS listener: the Kafka container's {@code stop()}
+ * already awaits the in-flight {@code consume()} (insert → ack) before the container terminates,
+ * so no custom drain bean is needed here. This listener adds the same readiness-flip +
+ * observability the other services have: {@link ContextClosedEvent} fires first →
+ * readiness {@link ReadinessState#REFUSING_TRAFFIC} → pod removed from Service endpoints
+ * before the container drains. Liveness stays UP.
  */
 @Component
 public class ShutdownLifecycleListener {

@@ -13,25 +13,26 @@ import reactor.core.scheduler.Scheduler;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Duration;
 
 /**
  * Alert consumer for {@code payment.alerts}.
  *
- * Idempotent actioning via {@code processed_alerts ON CONFLICT (alert_id) DO NOTHING}:
+ * <p>Idempotent actioning via {@code processed_alerts ON CONFLICT (alert_id) DO NOTHING}:
  * the same {@code alert_id} is always safe to receive twice — the second insert is a no-op.
  * {@code alert_id} is a deterministic UUIDv5, so replay produces the same id (ADR-13).
  *
- * {@code isolation.level=read_committed} is set on the consumer factory (immutable constraint):
+ * <p>{@code isolation.level=read_committed} is set on the consumer factory (immutable constraint):
  * required for Kafka transactional producer compatibility — without it, the consumer reads
  * uncommitted messages from aborted Kafka transactions.
  *
- * {@code produced_at} from alert payload = business ordering (when the transaction occurred).
+ * <p>{@code produced_at} from alert payload = business ordering (when the transaction occurred).
  * {@code acted_at DEFAULT now()} = operational ordering (when we actioned the alert).
  * These must NOT be conflated.
  *
- * Structurally broken alerts route to {@code payment.alerts.DLT} via ErrorHandlingDeserializer.
+ * <p>Structurally broken alerts route to {@code payment.alerts.DLT} via ErrorHandlingDeserializer.
  * A poison alert never stalls the consumer.
  */
 @Component
@@ -52,7 +53,7 @@ public class AlertConsumer {
     /**
      * Returns {@code void} — immutable constraint. Spring Kafka silently ignores reactive returns.
      *
-     * Acks AFTER the insert commits so that a failed insert is retried (exception propagates
+     * <p>Acks AFTER the insert commits so that a failed insert is retried (exception propagates
      * to DefaultErrorHandler → bounded retries → DLT). Fire-and-forget ack would silently
      * drop alerts whose insert failed (acked offset + no processed_alerts row).
      */
@@ -61,14 +62,14 @@ public class AlertConsumer {
             topics           = "payment.alerts",
             containerFactory = "alertListenerContainerFactory"
     )
-    public void consume(ConsumerRecord<String, AlertMessage> record, Acknowledgment ack) {
-        if (record.value() == null) {
+    public void consume(ConsumerRecord<String, AlertMessage> consumerRecord, Acknowledgment ack) {
+        if (consumerRecord.value() == null) {
             // Deserialization failure handled by ErrorHandlingDeserializer → DLT
             ack.acknowledge();
             return;
         }
 
-        AlertMessage alert = record.value();
+        AlertMessage alert = consumerRecord.value();
 
         // Block on the VT until the insert commits. VT parks; carrier thread is NOT pinned.
         // Exception (including timeout) propagates to DefaultErrorHandler → retry → DLT.
@@ -86,7 +87,7 @@ public class AlertConsumer {
         ack.acknowledge();
     }
 
-    private int insertProcessedAlert(AlertMessage alert) throws Exception {
+    private int insertProcessedAlert(AlertMessage alert) throws SQLException {
         String sql =
                 "INSERT INTO processed_alerts(alert_id, account_id, rule_name, produced_at) "
               + "VALUES (?::uuid, ?, ?, ?) ON CONFLICT (alert_id) DO NOTHING";

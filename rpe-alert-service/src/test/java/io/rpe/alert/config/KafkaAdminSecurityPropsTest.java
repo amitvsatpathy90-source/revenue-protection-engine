@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Pins the admin-client transport-security fold (ADR-20). Per-service copy
  * of the detection-service test (no shared jar — schema contract only).
  *
- * Without the securityProps fold the observability {@code Admin} client connects credential-less
+ * <p>Without the securityProps fold the observability {@code Admin} client connects credential-less
  * under SASL_SSL: every depth poll fails inside the {@code @BoundaryHandler} poller and every
  * {@code rpe.dlt.depth} gauge freezes at its boot value 0 — false-healthy, silently disarming
  * the ADR-23 RpeDlt* alerts. The Testcontainers suites run PLAINTEXT, where the fold is a no-op,

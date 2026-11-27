@@ -12,7 +12,7 @@ import java.sql.Connection;
 /**
  * 30-day rolling purge of processed_alerts rows (Stage 6 — sole writer rule).
  *
- * alert-service is the sole writer of processed_alerts (ADR-17 §3.4), so it owns the
+ * <p>alert-service is the sole writer of processed_alerts (ADR-17 §3.4), so it owns the
  * purge. The previous purge_old_records() function in the relay violated this by deleting
  * from a table it does not own. alert_role (this service's role) has DELETE on
  * processed_alerts; relay_role does not.
@@ -27,7 +27,7 @@ import java.sql.Connection;
  * re-opens silent double-acting on late re-drives (2026-07 arch-audit R4). The table holds
  * only alerts (~1% of events), so 30d of rows is cheap.
  *
- * Runs hourly with a 5-minute startup offset. Executes on a virtual thread — no JDBC
+ * <p>Runs hourly with a 5-minute startup offset. Executes on a virtual thread — no JDBC
  * pinning risk as this is a simple DELETE with no PgJDBC synchronized path.
  */
 @Component

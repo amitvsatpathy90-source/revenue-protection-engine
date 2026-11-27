@@ -35,7 +35,9 @@ class AlertArchTest {
                 .importPackages("io.rpe.alert");
     }
 
-    /** subscribe() with no onError handler swallows exceptions silently. */
+    /**
+     * subscribe() with no onError handler swallows exceptions silently.
+     */
     @Test
     void subscribeCallsMustHaveErrorHandler() {
         ArchRule rule = noClasses()
@@ -44,7 +46,9 @@ class AlertArchTest {
         rule.check(classes);
     }
 
-    /** @KafkaListener methods must return void — Spring Kafka silently ignores other returns. */
+    /**
+     * @KafkaListener methods must return void — Spring Kafka silently ignores other returns.
+     */
     @Test
     void kafkaListenerMethodsMustReturnVoid() {
         ArchRule rule = methods()
@@ -53,7 +57,9 @@ class AlertArchTest {
         rule.check(classes);
     }
 
-    /** synchronized pins virtual-thread carriers — use ReentrantLock (virtual thread pinning constraint). */
+    /**
+     * synchronized pins virtual-thread carriers — use ReentrantLock (virtual thread pinning constraint).
+     */
     @Test
     void noSynchronizedMethods() {
         ArchRule rule = noMethods().should().haveModifier(JavaModifier.SYNCHRONIZED);
@@ -103,10 +109,11 @@ class AlertArchTest {
                 for (JavaCodeUnit codeUnit : clazz.getCodeUnits()) {
                     boolean marked = classMarked || codeUnit.isAnnotatedWith(BoundaryHandler.class);
                     for (TryCatchBlock block : codeUnit.getTryCatchBlocks()) {
-                        // Only java.lang.Exception — NOT Throwable: try-with-resources desugars to
-                        // a synthetic catch(Throwable) for resource cleanup, which is not a real
-                        // broad catch. The codebase has zero hand-written Throwable catches
-                        // (the error-boundary discipline).
+
+                        // Only java.lang.Exception — NOT Throwable: try-with-resources desugars to a
+                        // synthetic catch for resource cleanup, which is not a real broad catch.
+                        //
+                        // The codebase has zero hand-written Throwable catches (the error-boundary discipline).
                         boolean broad = block.getCaughtThrowables().stream()
                                 .map(JavaClass::getName)
                                 .anyMatch(n -> n.equals("java.lang.Exception"));

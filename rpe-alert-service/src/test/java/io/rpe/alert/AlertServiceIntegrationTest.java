@@ -15,7 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.redpanda.RedpandaContainer;
@@ -38,11 +38,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Alert service integration tests — the re-homed core scenarios 2 & 4 (ADR-17 §7 Stage 2),
  * now exercising the real {@code AlertConsumer} rather than direct SQL.
  *
- *  - Idempotent actioning: a redelivered alert_id → exactly one processed_alerts row
- *    (deterministic UUIDv5 + ON CONFLICT DO NOTHING).
- *  - Poison alert (invalid JSON) → payment.alerts.DLT; the consumer never stalls.
+ * <ul>
+ *     <li>Idempotent actioning: a redelivered alert_id → exactly one processed_alerts row
+ *         (deterministic UUIDv5 + ON CONFLICT DO NOTHING).</li>
+ *     <li>Poison alert (invalid JSON) → payment.alerts.DLT; the consumer never stalls.</li>
+ * </ul>
  *
- * No Redis container — the alert service touches only Kafka + Postgres. Flyway (enabled by
+ * <p>No Redis container — the alert service touches only Kafka + Postgres. Flyway (enabled by
  * default here) provisions the processed_alerts table the service owns.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -55,8 +57,8 @@ class AlertServiceIntegrationTest {
 
     @Container
     @SuppressWarnings("resource")
-    static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>(DockerImageName.parse("postgres:16.3"))
+    static final PostgreSQLContainer POSTGRES =
+            new PostgreSQLContainer(DockerImageName.parse("postgres:16.3"))
                     .withDatabaseName("rpe")
                     .withUsername("rpe")
                     .withPassword("rpe_test");
@@ -70,19 +72,22 @@ class AlertServiceIntegrationTest {
         registry.add("DB_URL", POSTGRES::getJdbcUrl);
         registry.add("DB_USER", POSTGRES::getUsername);
         registry.add("DB_PASSWORD", POSTGRES::getPassword);
-        // Testcontainers Postgres has no 'alert' schema (no k8s bootstrap). Use public so
-        // Flyway can create processed_alerts without the per-service schema setup.
+
+        // Testcontainers Postgres has no 'alert' schema (no k8s bootstrap).
+        // Use public so Flyway can create processed_alerts without the per-service schema setup.
         registry.add("spring.flyway.schemas", () -> "public");
         registry.add("spring.flyway.table", () -> "flyway_schema_history");
     }
 
-    @Autowired DataSource   dataSource;
-    @Autowired ObjectMapper objectMapper;
+    @Autowired
+    DataSource dataSource;
+    @Autowired
+    ObjectMapper objectMapper;
 
     @Test
     @DisplayName("Redelivered alert_id → exactly one processed_alerts row (ON CONFLICT DO NOTHING)")
     void duplicateAlertIsActionedExactlyOnce() throws Exception {
-        UUID   alertId   = UUID.randomUUID();
+        UUID alertId = UUID.randomUUID();
         String accountId = UUID.randomUUID().toString();
         String alertJson = alertJson(alertId, accountId, "velocity");
 
@@ -95,9 +100,10 @@ class AlertServiceIntegrationTest {
 
         // Barrier, not a fixed sleep: a sentinel alert with a NEW alert_id but the SAME account key
         // rides the same partition and, sent after the redelivery, is actioned strictly after it.
+        //
         // When the sentinel's processed_alerts row lands, the redelivery has already had its chance —
-        // a broken ON CONFLICT guard would have inserted a duplicate by now. Replaces a fixed 3s
-        // sleep a slow runner could pass vacuously (redelivery not yet consumed).
+        // a broken ON CONFLICT guard would have inserted a duplicate by now. Replaces a fixed 3s sleep
+        // a slow runner could pass vacuously (redelivery not yet consumed).
         UUID sentinelId = UUID.randomUUID();
         sendRaw("payment.alerts", accountId, alertJson(sentinelId, accountId, "velocity"));
         Awaitility.await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
@@ -115,7 +121,7 @@ class AlertServiceIntegrationTest {
         assertThat(dlt).hasSizeGreaterThanOrEqualTo(1);
 
         // Consumer still alive: a valid alert after the poison message is actioned.
-        UUID   alertId   = UUID.randomUUID();
+        UUID alertId = UUID.randomUUID();
         String accountId = UUID.randomUUID().toString();
         sendRaw("payment.alerts", accountId, alertJson(alertId, accountId, "geo"));
         Awaitility.await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
@@ -139,6 +145,7 @@ class AlertServiceIntegrationTest {
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, REDPANDA.getBootstrapServers());
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+
         try (var producer = new KafkaProducer<String, String>(props)) {
             producer.send(new ProducerRecord<>(topic, key, value)).get(10, TimeUnit.SECONDS);
         }
@@ -156,6 +163,7 @@ class AlertServiceIntegrationTest {
         try (var consumer = new KafkaConsumer<String, String>(props)) {
             consumer.subscribe(List.of(topic));
             long deadline = System.currentTimeMillis() + (timeoutSeconds * 1000L);
+
             while (messages.size() < minMessages && System.currentTimeMillis() < deadline) {
                 consumer.poll(Duration.ofMillis(500)).forEach(r -> messages.add(r.value()));
             }
@@ -168,6 +176,7 @@ class AlertServiceIntegrationTest {
              var ps = conn.prepareStatement(
                      "SELECT COUNT(*) FROM processed_alerts WHERE alert_id = ?::uuid")) {
             ps.setString(1, alertId.toString());
+
             try (var rs = ps.executeQuery()) {
                 return rs.next() ? rs.getInt(1) : 0;
             }

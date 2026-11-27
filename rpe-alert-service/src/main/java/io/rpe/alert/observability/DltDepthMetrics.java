@@ -1,9 +1,9 @@
 package io.rpe.alert.observability;
 
-import io.rpe.alert.config.BoundaryHandler;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.rpe.alert.config.BoundaryHandler;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.common.TopicPartition;
@@ -20,18 +20,19 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * {@code rpe.dlt.depth{topic=...}} for the DLTs {@code rpe-alert-service} solely writes (ADR-23).
+ * {@code rpe.dlt.depth&#123;topic=...&#125;} for the DLTs {@code rpe-alert-service} solely writes (ADR-23).
  *
- * Per-service copy of the detection-service poller (no shared jar),
- * symmetric with {@code Pii} / {@code KafkaSecurity} / {@code BoundaryHandler}. Alert-service owns
+ * <p>Per-service copy of the detection-service poller (no shared jar),
+ * symmetric with {@code Pii} / {@code KafkaSecurity} / {@code BoundaryHandler}. {@code alert-service} owns
  * {@code payment.alerts.DLT}; the {@code .parked} topic holds alerts that re-poisoned past the
  * re-drive attempt cap (ADR-23) — a non-empty parked topic is a page-worthy "manual decision
  * required" signal.
  *
- * Depth = Σ per partition (latest − earliest offset); retention-expired messages fall out
+ * <p>Depth = Σ per partition (latest − earliest offset); retention-expired messages fall out
  * naturally. All admin waits are bounded (5s) so a hung broker delays, never wedges, the
  * scheduling thread.
  */
@@ -85,6 +86,9 @@ public class DltDepthMetrics {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
+            } catch (TimeoutException e) {
+                pollFailuresByTopic.get(topic).increment();
+                log.warn("DLT depth query timed out for {} after {}s", topic, ADMIN_TIMEOUT_SEC);
             } catch (ExecutionException e) {
                 if (e.getCause() instanceof UnknownTopicOrPartitionException) {
                     // Topic not created yet (fresh lab stack) — depth is legitimately 0
@@ -93,19 +97,20 @@ public class DltDepthMetrics {
                     pollFailuresByTopic.get(topic).increment();
                     log.warn("DLT depth query failed for {}: {}", topic, e.getMessage());
                 }
-            } catch (Exception e) {
+            } catch (RuntimeException e) {
                 pollFailuresByTopic.get(topic).increment();
                 log.warn("DLT depth query failed for {}: {}", topic, e.getMessage());
             }
         }
     }
 
-    private long queryDepth(String topic) throws Exception {
+    private long queryDepth(String topic)
+            throws InterruptedException, ExecutionException, TimeoutException {
         var description = admin.describeTopics(List.of(topic))
                 .topicNameValues().get(topic).get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
 
         Map<TopicPartition, OffsetSpec> earliestReq = new HashMap<>();
-        Map<TopicPartition, OffsetSpec> latestReq   = new HashMap<>();
+        Map<TopicPartition, OffsetSpec> latestReq = new HashMap<>();
         for (TopicPartitionInfo p : description.partitions()) {
             TopicPartition tp = new TopicPartition(topic, p.partition());
             earliestReq.put(tp, OffsetSpec.earliest());
@@ -113,7 +118,7 @@ public class DltDepthMetrics {
         }
 
         var earliest = admin.listOffsets(earliestReq).all().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
-        var latest   = admin.listOffsets(latestReq).all().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
+        var latest = admin.listOffsets(latestReq).all().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
 
         long depth = 0;
         for (TopicPartition tp : earliestReq.keySet()) {
