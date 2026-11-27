@@ -1,5 +1,6 @@
 package io.rpe.relay;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -14,6 +15,7 @@ import reactor.core.scheduler.Scheduler;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -22,18 +24,18 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Outbox relay: polls PENDING rows and publishes them to {@code payment.alerts}.
- *
+ * <p>
  * Concurrency: {@code FOR UPDATE SKIP LOCKED} allows safe concurrent relay instances.
  * Each relay instance has a unique {@code transactional.id} (RELAY_INSTANCE_ID, ADR-06).
- *
+ * <p>
  * Adaptive polling: processed > 0 → tight (minPollMs); no signal + no rows → exponential
  * backoff to maxPollMs. Result: 40× fewer idle DB queries vs fixed 200ms polling (ADR-05).
- *
+ * <p>
  * <b>Bounded attempts → dead-letter status:</b> rows that exhaust {@code maxAttempts}
  * transition PENDING → FAILED in the same batch transaction. FAILED rows are never
  * re-picked, never purged by the 7-day job, and are surfaced by the
  * {@code rpe.outbox.failed.count} gauge — an operator decision, not a retry loop.
- *
+ * <p>
  * All JDBC runs on {@code jdbcScheduler} (dedicated platform-thread pool).
  * PgJDBC {@code synchronized} internals WILL pin VT carrier threads if run on VT lanes.
  */
@@ -41,8 +43,8 @@ import java.util.concurrent.TimeUnit;
 @BoundaryHandler("relay-loop-must-survive any failure; the background loop logs and continues polling the outbox")
 public class OutboxRelay implements SmartLifecycle {
 
-    private static final Logger log   = LoggerFactory.getLogger(OutboxRelay.class);
-    private static final int    LIMIT = 50;
+    private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);
+    private static final int LIMIT = 50;
 
     /**
      * Graceful-shutdown phase (ADR-22). The relay has no Kafka CONSUMER container, but it does
@@ -54,21 +56,23 @@ public class OutboxRelay implements SmartLifecycle {
      */
     static final int PHASE = AbstractMessageListenerContainer.DEFAULT_PHASE - 10;
 
-    /** Total bound on stopping the loop: a short grace for an in-flight batch to finish, then an
-     *  interrupt to break an idle poll-park, then the remainder of the join. */
-    private static final Duration STOP_TIMEOUT      = Duration.ofSeconds(10);
-    private static final long     BATCH_GRACE_MILLIS = 2_000;
+    /**
+     * Total bound on stopping the loop: a short grace for an in-flight batch to finish, then an
+     * interrupt to break an idle poll-park, then the remainder of the join.
+     */
+    private static final Duration STOP_TIMEOUT = Duration.ofSeconds(10);
+    private static final long BATCH_GRACE_MILLIS = 2_000;
 
     private final RelayProperties props;
     private final PostgresNotifyRelayTrigger relayTrigger;
     private final AlertPublisher alertPublisher;
-    private final DataSource     dataSource;
-    private final ObjectMapper   objectMapper;
-    private final Scheduler      jdbcScheduler;
-    private final MeterRegistry  meterRegistry;
+    private final DataSource dataSource;
+    private final ObjectMapper objectMapper;
+    private final Scheduler jdbcScheduler;
+    private final MeterRegistry meterRegistry;
 
     private volatile boolean running;
-    private volatile Thread  relayThread;
+    private volatile Thread relayThread;
 
     public OutboxRelay(
             RelayProperties props,
@@ -78,27 +82,27 @@ public class OutboxRelay implements SmartLifecycle {
             ObjectMapper objectMapper,
             Scheduler jdbcScheduler,
             MeterRegistry meterRegistry) {
-        this.props          = props;
-        this.relayTrigger   = relayTrigger;
+        this.props = props;
+        this.relayTrigger = relayTrigger;
         this.alertPublisher = alertPublisher;
-        this.dataSource     = dataSource;
-        this.objectMapper   = objectMapper;
-        this.jdbcScheduler  = jdbcScheduler;
-        this.meterRegistry  = meterRegistry;
+        this.dataSource = dataSource;
+        this.objectMapper = objectMapper;
+        this.jdbcScheduler = jdbcScheduler;
+        this.meterRegistry = meterRegistry;
     }
 
     @Override
     public void start() {
-        running     = true;
+        running = true;
         relayThread = Thread.ofVirtual().name("rpe-relay").start(this::relayLoop);
     }
 
     /**
      * Graceful shutdown (ADR-22), DRAIN phase. Two-phase stop so an in-flight outbox batch
      * completes cleanly rather than being torn in half:
-     *   1. clear {@code running} and join briefly — a batch already in progress finishes and the
-     *      loop exits at its next guard check;
-     *   2. if still parked in an idle poll-wait, interrupt and join the remainder.
+     * 1. clear {@code running} and join briefly — a batch already in progress finishes and the
+     * loop exits at its next guard check;
+     * 2. if still parked in an idle poll-wait, interrupt and join the remainder.
      * On a forced timeout the rows simply stay PENDING and are re-sent on restart — the idempotent
      * producer + {@code processed_alerts ON CONFLICT} keep that exactly-once on the topic.
      */
@@ -177,12 +181,12 @@ public class OutboxRelay implements SmartLifecycle {
      * Runs entirely on the jdbcScheduler platform thread.
      * Returns the number of rows processed in this batch.
      */
-    private int processOutboxBatch() throws Exception {
+    private int processOutboxBatch() throws SQLException, JsonProcessingException {
         int processed = 0;
         String selectSql =
                 "SELECT id, account_id, payload, traceparent, tracestate FROM outbox "
-              + "WHERE status='PENDING' AND attempts < ? "
-              + "FOR UPDATE SKIP LOCKED LIMIT " + LIMIT;
+                        + "WHERE status='PENDING' AND attempts < ? "
+                        + "FOR UPDATE SKIP LOCKED LIMIT " + LIMIT;
 
         try (Connection conn = dataSource.getConnection()) {
             conn.setAutoCommit(false);
@@ -223,7 +227,7 @@ public class OutboxRelay implements SmartLifecycle {
         return processed;
     }
 
-    private void incrementAttempts(Connection conn, UUID id) throws Exception {
+    private void incrementAttempts(Connection conn, UUID id) throws SQLException {
         try (var ps = conn.prepareStatement(
                 "UPDATE outbox SET attempts=attempts+1 WHERE id=?::uuid")) {
             ps.setQueryTimeout(10);
@@ -232,13 +236,13 @@ public class OutboxRelay implements SmartLifecycle {
         }
     }
 
-    private void markExhaustedAsFailed(Connection conn) throws Exception {
+    private void markExhaustedAsFailed(Connection conn) throws SQLException {
         // SKIP LOCKED subselect: never block on rows another relay instance holds.
         // Rows locked by THIS transaction (just attempted above) are not skipped.
         try (var ps = conn.prepareStatement(
                 "UPDATE outbox SET status='FAILED' WHERE id IN ("
-              + "SELECT id FROM outbox WHERE status='PENDING' AND attempts >= ? "
-              + "FOR UPDATE SKIP LOCKED)")) {
+                        + "SELECT id FROM outbox WHERE status='PENDING' AND attempts >= ? "
+                        + "FOR UPDATE SKIP LOCKED)")) {
             ps.setQueryTimeout(10);
             ps.setInt(1, props.maxAttempts());
             int failed = ps.executeUpdate();
@@ -257,5 +261,6 @@ public class OutboxRelay implements SmartLifecycle {
     // relay_role has no DELETE privilege on either table.
 
     private record OutboxRow(UUID id, String accountId, JsonNode payload,
-                             String traceparent, String tracestate) {}
+                             String traceparent, String tracestate) {
+    }
 }

@@ -7,8 +7,9 @@
 -- run against in its ephemeral Postgres. It mirrors the core V1/V2/V3/V4 migrations; if the
 -- core outbox contract changes, this fixture must track it (the service-independence discipline).
 
-CREATE TABLE outbox (
-    id          UUID        PRIMARY KEY,
+CREATE TABLE outbox
+(
+    id          UUID PRIMARY KEY,
     account_id  TEXT        NOT NULL,
     payload     JSONB       NOT NULL,
     status      TEXT        NOT NULL DEFAULT 'PENDING',
@@ -21,10 +22,11 @@ CREATE TABLE outbox (
 );
 CREATE INDEX idx_outbox_status_created ON outbox (status, created_at);
 
-CREATE TABLE processed_alerts (
+CREATE TABLE processed_alerts
+(
     alert_id    UUID PRIMARY KEY,
-    account_id  TEXT NOT NULL,
-    rule_name   TEXT NOT NULL,
+    account_id  TEXT        NOT NULL,
+    rule_name   TEXT        NOT NULL,
     produced_at TIMESTAMPTZ NOT NULL,
     acted_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -34,7 +36,8 @@ CREATE TABLE processed_alerts (
 -- Purge is now owned per table: detection purges outbox; alert-service purges processed_alerts.
 
 -- Cross-process relay wakeup: one notification per batch insert (FOR EACH STATEMENT).
-CREATE OR REPLACE FUNCTION notify_outbox_insert() RETURNS TRIGGER AS $$
+CREATE OR REPLACE FUNCTION notify_outbox_insert() RETURNS TRIGGER AS
+$$
 BEGIN
     PERFORM pg_notify('outbox_ready', '1');
     RETURN NEW;
@@ -42,6 +45,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER outbox_insert_notify
-    AFTER INSERT ON outbox
+    AFTER INSERT
+    ON outbox
     FOR EACH STATEMENT
-    EXECUTE FUNCTION notify_outbox_insert();
+EXECUTE FUNCTION notify_outbox_insert();

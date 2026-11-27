@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Scheduler beans for the relay service.
- *
+ * <p>
  * Only the JDBC scheduler is needed here — the relay has no reactive Redis lane and no
  * WebFlux surface. All relay JDBC (outbox read, status transitions) runs on this
  * dedicated BOUNDED platform-thread pool: PgJDBC {@code synchronized} internals pin VT

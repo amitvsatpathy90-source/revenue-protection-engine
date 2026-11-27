@@ -1,5 +1,6 @@
 package io.rpe.relay.config;
 
+import org.jspecify.annotations.NullMarked;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
@@ -13,6 +14,7 @@ import java.util.Objects;
  * OAuth2 confused-deputy hole (a token minted for another relying party must not be accepted).
  * Error message carries no token data (no PII/secret). Package-private (boundary isolation).
  */
+@NullMarked
 final class AudienceValidator implements OAuth2TokenValidator<Jwt> {
 
     private static final OAuth2Error INVALID_AUDIENCE =

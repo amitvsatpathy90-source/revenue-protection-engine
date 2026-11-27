@@ -14,11 +14,11 @@ import java.util.function.Supplier;
  * it, so the relay's {@code payment.alerts} produce span continues the originating event's trace
  * across the durable-queue gap — the seam the k8s OTel agent cannot stitch (it sees detection's
  * INSERT and the relay's SELECT as unrelated ops).
- *
+ * <p>
  * This is the relay-side counterpart of detection's {@code TraceContextWriter} — a per-service
  * copy (the service-independence discipline), symmetric with {@code Pii}/{@code KafkaSecurity}/
  * {@code BoundaryHandler}.
- *
+ * <p>
  * Fail-open: a NULL/blank traceparent (legacy row, or a producer that ran without tracing) runs
  * the action with no restored parent — the observation-enabled template then starts a fresh trace
  * for that alert. Never throws into the publish path.

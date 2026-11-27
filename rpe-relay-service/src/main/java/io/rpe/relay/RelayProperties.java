@@ -4,7 +4,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
  * Relay tuning, bound from {@code rpe.relay.*}.
- *
+ * <p>
  * Extracted from the core module's {@code RpeProperties.RelayProperties} during the
  * ADR-17 §7 Stage 1 service split — the relay now owns its own config slice. The
  * property prefix is unchanged so existing config/env carries over.
@@ -17,4 +17,5 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record RelayProperties(
         long minPollMs,
         long maxPollMs,
-        int maxAttempts) {}
+        int maxAttempts) {
+}

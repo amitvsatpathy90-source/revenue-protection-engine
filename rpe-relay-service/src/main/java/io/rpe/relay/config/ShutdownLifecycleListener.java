@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
 /**
  * Marks the start of a graceful shutdown (ADR-22). Per-service copy — no shared jar
  * (the service-independence discipline), symmetric with {@code Pii} / {@code KafkaSecurity} / {@code BoundaryHandler}.
- *
+ * <p>
  * {@link ContextClosedEvent} fires at the very start of context close — before any
  * {@link org.springframework.context.SmartLifecycle#stop()} (including the relay-loop stop) and
  * before bean destruction. Flipping readiness to {@link ReadinessState#REFUSING_TRAFFIC} here
@@ -26,10 +26,10 @@ public class ShutdownLifecycleListener {
     private static final Logger log = LoggerFactory.getLogger(ShutdownLifecycleListener.class);
 
     private final ApplicationEventPublisher events;
-    private final MeterRegistry             meterRegistry;
+    private final MeterRegistry meterRegistry;
 
     public ShutdownLifecycleListener(ApplicationEventPublisher events, MeterRegistry meterRegistry) {
-        this.events        = events;
+        this.events = events;
         this.meterRegistry = meterRegistry;
     }
 

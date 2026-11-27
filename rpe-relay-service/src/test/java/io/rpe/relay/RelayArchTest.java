@@ -36,7 +36,9 @@ class RelayArchTest {
                 .importPackages("io.rpe");
     }
 
-    /** subscribe() with no onError handler swallows exceptions silently. */
+    /**
+     * subscribe() with no onError handler swallows exceptions silently.
+     */
     @Test
     void subscribeCallsMustHaveErrorHandler() {
         ArchRule rule = noClasses()
@@ -45,7 +47,9 @@ class RelayArchTest {
         rule.check(classes);
     }
 
-    /** synchronized pins virtual-thread carriers — use ReentrantLock (virtual thread pinning constraint). */
+    /**
+     * synchronized pins virtual-thread carriers — use ReentrantLock (virtual thread pinning constraint).
+     */
     @Test
     void noSynchronizedMethods() {
         ArchRule rule = noMethods().should().haveModifier(JavaModifier.SYNCHRONIZED);

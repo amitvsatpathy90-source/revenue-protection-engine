@@ -1,7 +1,9 @@
 package io.rpe.relay.config;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import java.time.Duration;
+
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -20,19 +22,16 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.client.RestTemplate;
 
-import java.time.Duration;
-
 /**
- * Zero-trust Actuator hardening for the relay (servlet surface, ADR-19). Identical policy to
- * the detection reactive chain, expressed in the {@code HttpSecurity} idiom. Per-service copy
- * by design (no shared rpe-common jar).
+ * Zero-trust Actuator hardening for the relay (servlet surface, ADR-19).
+ * Identical policy to the detection reactive chain, expressed in the
+ * {@code HttpSecurity} idiom. Per-service copy by design (no shared
+ * rpe-common jar).
  *
- * <p>{@link ConditionalOnWebApplication}(SERVLET) is load-bearing: the integration test boots
- * with {@code webEnvironment = NONE} where {@code HttpSecurity} does not exist; gating keeps
- * these beans (and the fail-closed decoder) out of non-web contexts so the suite still loads.
- *
- * <p>NOTE: verify the Security 7.0 servlet lambda DSL + SimpleClientHttp
- * timeout overloads against the changelog before promoting.
+ * <p>{@link ConditionalOnWebApplication}(SERVLET) is load-bearing: the
+ * integration test boots with {@code webEnvironment = NONE} where
+ * {@code HttpSecurity} does not exist; gating keeps these beans (and the
+ * fail-closed decoder) out of non-web contexts so the suite still loads.
  */
 @Configuration
 @EnableWebSecurity
@@ -40,26 +39,32 @@ import java.time.Duration;
 public class ManagementSecurityConfig {
 
     @Bean
-    SecurityFilterChain actuatorSecurity(HttpSecurity http) throws Exception {
+    SecurityFilterChain actuatorSecurity(HttpSecurity http) {
         return http
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers(HttpMethod.GET,
-                        "/actuator/health/liveness", "/actuator/health/readiness").permitAll()
-                .requestMatchers(HttpMethod.GET, "/actuator/prometheus")
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/actuator/health/liveness",
+                                "/actuator/health/readiness").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/actuator/prometheus")
                         .hasAuthority("SCOPE_metrics:scrape")
-                .requestMatchers("/actuator/**").authenticated()
-                .anyRequest().denyAll())
-            .oauth2ResourceServer(o -> o.jwt(Customizer.withDefaults()))
-            .csrf(AbstractHttpConfigurer::disable)
-            .httpBasic(AbstractHttpConfigurer::disable)
-            .formLogin(AbstractHttpConfigurer::disable)
-            .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .build();
+                        .requestMatchers("/actuator/**").authenticated()
+                        .anyRequest().denyAll())
+                .oauth2ResourceServer(o -> o.jwt(Customizer.withDefaults()))
+                // Bearer-token authentication uses the Authorization header;
+                // no cookie-based or session-based authentication is configured.
+                .csrf(AbstractHttpConfigurer::disable)
+                .httpBasic(AbstractHttpConfigurer::disable)
+                .formLogin(AbstractHttpConfigurer::disable)
+                .sessionManagement(s -> s.sessionCreationPolicy(
+                        SessionCreationPolicy.STATELESS))
+                .build();
     }
 
     /**
-     * Validates signature (JWKS, timeout-bounded fetch) + issuer + audience. Audience binding
-     * closes the confused-deputy hole. Fail-closed: no defaults for jwk-set-uri/issuer.
+     * Validates signature (JWKS, timeout-bounded fetch) + issuer + audience.
+     * Audience binding closes the confused-deputy hole. Fail-closed: no
+     * defaults for jwk-set-uri/issuer.
      */
     @Bean
     JwtDecoder actuatorJwtDecoder(
@@ -76,9 +81,14 @@ public class ManagementSecurityConfig {
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSetUri(jwkSetUri)
                 .restOperations(new RestTemplate(rf))
                 .build();
-        OAuth2TokenValidator<Jwt> withIssuer   = JwtValidators.createDefaultWithIssuer(issuer);
+
+        OAuth2TokenValidator<Jwt> withIssuer =
+                JwtValidators.createDefaultWithIssuer(issuer);
         OAuth2TokenValidator<Jwt> withAudience = new AudienceValidator(audience);
-        decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(withIssuer, withAudience));
+
+        decoder.setJwtValidator(
+                new DelegatingOAuth2TokenValidator<>(withIssuer, withAudience));
+
         return decoder;
     }
 }

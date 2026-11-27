@@ -13,24 +13,24 @@ import java.time.Instant;
 
 /**
  * Exposes Postgres LISTEN/NOTIFY connection health to {@code /actuator/health}.
- *
+ * <p>
  * Two distinct failure modes are surfaced:
- *   1. Connection loss: {@code listenerHealthy=false} (PostgresNotifyRelayTrigger detects it)
- *   2. "Connected but trigger not firing": {@code lastNotificationAt} is stale under write load.
- *      A long notification gap while the outbox is actively receiving inserts indicates
- *      the V4 trigger was dropped or the LISTEN channel is dead without a TCP-level error.
- *
+ * 1. Connection loss: {@code listenerHealthy=false} (PostgresNotifyRelayTrigger detects it)
+ * 2. "Connected but trigger not firing": {@code lastNotificationAt} is stale under write load.
+ * A long notification gap while the outbox is actively receiving inserts indicates
+ * the V4 trigger was dropped or the LISTEN channel is dead without a TCP-level error.
+ * <p>
  * {@code rpe.relay.listener.healthy} gauge (0/1) is also published to Prometheus for alerting.
  */
 @Component
 public class RelayListenerHealthIndicator implements HealthIndicator {
 
     private final PostgresNotifyRelayTrigger relayTrigger;
-    private final MeterRegistry             meterRegistry;
+    private final MeterRegistry meterRegistry;
 
     public RelayListenerHealthIndicator(
             PostgresNotifyRelayTrigger relayTrigger, MeterRegistry meterRegistry) {
-        this.relayTrigger  = relayTrigger;
+        this.relayTrigger = relayTrigger;
         this.meterRegistry = meterRegistry;
     }
 
@@ -56,7 +56,7 @@ public class RelayListenerHealthIndicator implements HealthIndicator {
         if (lastNotify != null) {
             long secondsSince = Duration.between(lastNotify, Instant.now()).toSeconds();
             builder.withDetail("lastNotificationAt", lastNotify.toString())
-                   .withDetail("secondsSinceLastNotification", secondsSince);
+                    .withDetail("secondsSinceLastNotification", secondsSince);
         } else {
             builder.withDetail("lastNotificationAt", "never");
         }

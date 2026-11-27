@@ -8,13 +8,14 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.awaitility.Awaitility;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.redpanda.RedpandaContainer;
@@ -33,12 +34,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Relay service exactly-once test — the re-homed core "scenario 6" (ADR-17 §7 Stage 1).
- *
+ * <p>
  * Tests the relay's actual contract in isolation, with detection ABSENT: a single PENDING
  * {@code outbox} row → the relay publishes it to {@code payment.alerts} EXACTLY ONCE (Kafka
  * transactional producer) → the row transitions to PUBLISHED. The relay reads the outbox
  * payload as an opaque JsonNode and republishes it byte-identically (ADR-11).
- *
+ * <p>
  * No Redis container: the relay touches only Postgres + Kafka. Flyway is enabled here only
  * (it is disabled in the relay's production profile — the relay owns no tables) to provision
  * the outbox contract DDL (V1__outbox_contract.sql) in the ephemeral Postgres.
@@ -54,14 +55,42 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers(disabledWithoutDocker = true)
 class RelayServiceIntegrationTest {
 
+    // Lower Redpanda's default 5 GiB disk-space threshold to 10 MiB so tests can write with ~256 MiB free.
+    //private static final long REDPANDA_TEST_MIN_FREE_BYTESs = 10L * 1024 * 1024;
+
+//    /**
+//     * Lowers Redpanda's free-disk threshold; fails with rpk output attached.
+//     */
+//    @BeforeAll
+//    static void configureRedpanda() throws Exception {
+//        String expected = Long.toString(REDPANDA_TEST_MIN_FREE_BYTES);
+//
+//        var set = REDPANDA.execInContainer(
+//                "rpk", "cluster", "config", "set",
+//                "storage_min_free_bytes", expected, "--all");
+//
+//        var get = REDPANDA.execInContainer(
+//                "rpk", "cluster", "config", "get",
+//                "storage_min_free_bytes", "--all");
+//
+//        String actual = get.getStdout().trim();
+//
+//        // Read-back guards against a silent no-op
+//        if (set.getExitCode() != 0 || get.getExitCode() != 0 || !expected.equals(actual)) {
+//            throw new IllegalStateException("Redpanda disk threshold update failed, expected=" + expected
+//                    + " actual=" + actual
+//                    + "\nset exit=" + set.getExitCode() + " stderr=" + set.getStderr()
+//                    + "\nget exit=" + get.getExitCode() + " stderr=" + get.getStderr());
+//        }
+//    }
+
     @Container
     static final RedpandaContainer REDPANDA =
             new RedpandaContainer(DockerImageName.parse("docker.redpanda.com/redpandadata/redpanda:v24.1.11"));
 
     @Container
-    @SuppressWarnings("resource")
-    static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>(DockerImageName.parse("postgres:16.3"))
+    static final PostgreSQLContainer POSTGRES =
+            new PostgreSQLContainer(DockerImageName.parse("postgres:16.3"))
                     .withDatabaseName("rpe")
                     .withUsername("rpe")
                     .withPassword("rpe_test");
@@ -77,16 +106,18 @@ class RelayServiceIntegrationTest {
         registry.add("DB_PASSWORD", POSTGRES::getPassword);
     }
 
-    @Autowired DataSource   dataSource;
-    @Autowired ObjectMapper objectMapper;
+    @Autowired
+    DataSource dataSource;
+    @Autowired
+    ObjectMapper objectMapper;
 
     @Test
     @DisplayName("Relay publishes exactly once to payment.alerts for one PENDING outbox row, then marks it PUBLISHED")
     void relayPublishesExactlyOnceForOnePendingOutboxRow() throws Exception {
-        UUID   outboxId  = UUID.randomUUID();
-        UUID   alertId   = UUID.randomUUID();
+        UUID outboxId = UUID.randomUUID();
+        UUID alertId = UUID.randomUUID();
         String accountId = UUID.randomUUID().toString();
-        String eventId   = UUID.randomUUID().toString();
+        String eventId = UUID.randomUUID().toString();
 
         String payload = objectMapper.writeValueAsString(java.util.Map.of(
                 "alertId", alertId.toString(),
@@ -116,7 +147,7 @@ class RelayServiceIntegrationTest {
             }
 
             assertThat(records).hasSize(1);
-            JsonNode published = objectMapper.readTree(records.get(0).value());
+            JsonNode published = objectMapper.readTree(records.getFirst().value());
             assertThat(published.get("alertId").asText()).isEqualTo(alertId.toString());
             assertThat(published.get("ruleName").asText()).isEqualTo("velocity");
             assertThat(published.get("accountId").asText()).isEqualTo(accountId);
@@ -124,7 +155,7 @@ class RelayServiceIntegrationTest {
             // The trace stitch: the produced record carries a traceparent header whose trace-id
             // equals the seeded parent's — i.e. the relay's produce span continues the SAME trace
             // across the durable-queue gap (its span-id differs; the trace-id does not).
-            Header tp = records.get(0).headers().lastHeader("traceparent");
+            Header tp = records.getFirst().headers().lastHeader("traceparent");
             assertThat(tp).as("relay must inject a traceparent header (ADR-25 outbox stitch)").isNotNull();
             String producedTraceparent = new String(tp.value());
             assertThat(producedTraceparent)
@@ -163,7 +194,7 @@ class RelayServiceIntegrationTest {
         try (Connection conn = dataSource.getConnection();
              var ps = conn.prepareStatement(
                      "INSERT INTO outbox(id, account_id, payload, status, attempts, traceparent) "
-                   + "VALUES (?::uuid, ?, ?::jsonb, 'PENDING', 0, ?)")) {
+                             + "VALUES (?::uuid, ?, ?::jsonb, 'PENDING', 0, ?)")) {
             ps.setString(1, id.toString());
             ps.setString(2, accountId);
             ps.setString(3, payloadJson);

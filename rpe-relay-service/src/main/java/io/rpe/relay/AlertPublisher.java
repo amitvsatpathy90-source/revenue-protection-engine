@@ -15,11 +15,11 @@ import java.util.UUID;
 
 /**
  * Publishes an outbox row to {@code payment.alerts} using a Kafka transactional producer.
- *
+ * <p>
  * Ordering: Commit Kafka transaction FIRST, then UPDATE outbox status.
  * If relay crashes between Kafka commit and JDBC update: the row remains PENDING and the
  * relay re-sends on restart.
- *
+ * <p>
  * <b>Delivery is at-least-once ON THE TOPIC, not exactly-once.</b> Producer idempotency only
  * de-dupes retries WITHIN a producer session (PID+epoch+sequence); a post-restart re-send is a
  * fresh transaction, so a duplicate record DOES land on {@code payment.alerts}. Exactly-once is
@@ -28,11 +28,11 @@ import java.util.UUID;
  * {@code payment.alerts} consumer MUST dedupe — a non-idempotent consumer double-acts (consumer idempotency).
  * (The batch-wide {@code conn.commit()} in {@link OutboxRelay} widens this re-send window to the
  * whole batch on a crash; consumer dedup absorbs it either way.)
- *
+ * <p>
  * The payload is forwarded as an OPAQUE {@link JsonNode} — never deserialized to a typed
  * DTO (ADR-11). Alert/event schema evolution has zero relay impact by design: a field
  * added by a newer producer flows through this relay byte-identically.
- *
+ * <p>
  * Called from the relay loop which runs JDBC on the jdbcScheduler (platform threads).
  * This method is called from that platform-thread context — no reactive wrapping needed.
  */
@@ -40,7 +40,7 @@ import java.util.UUID;
 @BoundaryHandler("relay-publish-boundary: any failure (Kafka tx abort, SQL error) ⇒ return false so the relay retries the outbox row")
 public class AlertPublisher {
 
-    private static final Logger log         = LoggerFactory.getLogger(AlertPublisher.class);
+    private static final Logger log = LoggerFactory.getLogger(AlertPublisher.class);
     private static final String ALERT_TOPIC = "payment.alerts";
 
     private final KafkaTemplate<String, JsonNode> relayKafkaTemplate;
@@ -57,11 +57,11 @@ public class AlertPublisher {
      * Publishes the outbox payload to Kafka and marks the row as PUBLISHED.
      *
      * @param conn        open JDBC connection holding the FOR UPDATE SKIP LOCKED row lock
-     * @param outboxId     outbox row PK
-     * @param accountId    routing key for Kafka (per-account ordering)
-     * @param payload      opaque JSONB payload from outbox row (AlertMessage JSON)
-     * @param traceparent  W3C trace context persisted by detection (ADR-25); nullable
-     * @param tracestate   W3C vendor state persisted by detection (ADR-25); nullable
+     * @param outboxId    outbox row PK
+     * @param accountId   routing key for Kafka (per-account ordering)
+     * @param payload     opaque JSONB payload from outbox row (AlertMessage JSON)
+     * @param traceparent W3C trace context persisted by detection (ADR-25); nullable
+     * @param tracestate  W3C vendor state persisted by detection (ADR-25); nullable
      * @return {@code true} if successfully published and marked; {@code false} on failure
      */
     public boolean publish(Connection conn, UUID outboxId, String accountId, JsonNode payload,
