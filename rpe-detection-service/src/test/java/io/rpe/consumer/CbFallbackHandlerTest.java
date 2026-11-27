@@ -29,26 +29,26 @@ import static org.mockito.Mockito.*;
  * Drives the real Redis CircuitBreaker through its transitions to lock down the C+D
  * fallback state machine (ADR-02): NORMAL → BUFFERING → PAUSED → DRAINING → NORMAL,
  * the pause/resume pairing, and the two race-hardening invariants from the EADIE audit:
- * <p>
- * 1. a close event mid-drain must NOT flip NORMAL while the buffer is non-empty
- * (the old CAS flipped early — new events overtook older buffered events for the
- * same account, inverting per-account state-mutation order);
- * 2. a task dispatched around the drain-completion window must never strand in the
- * buffer (the old listener-side read-state-then-act could offer into a buffer
- * nothing would ever drain again).
- * <p>
- * NOTE: these tests force CB transitions manually. In production the OPEN→HALF_OPEN
+ * <ol>
+ *   <li>A close event mid-drain must NOT flip NORMAL while the buffer is non-empty. The
+ *       old CAS flipped early, so new events overtook older buffered events for the
+ *       same account, inverting per-account state-mutation order.</li>
+ *   <li>A task dispatched around the drain-completion window must never strand in the
+ *       buffer. The old listener-side read-state-then-act could offer into a buffer
+ *       nothing would ever drain again.</li>
+ * </ol>
+ *
+ * <p>NOTE: these tests force CB transitions manually. In production the OPEN→HALF_OPEN
  * transition fires only because application.yml sets
  * automaticTransitionFromOpenToHalfOpenEnabled — the fallback stops all traffic to the
  * open breaker, so the lazy default would never transition. That wiring is pinned
  * separately by RedisCircuitBreakerAutoTransitionTest.
- * <p>
- * Invariant "no lane submit while holding transitionLock" is enforced at runtime by
+ *
+ * <p>Invariant "no lane submit while holding transitionLock" is enforced at runtime by
  * {@code submitLaneTask} (throws ISE) and pinned by
  * {@link #dispatchFailsFastWhenCurrentThreadHoldsTransitionLock}. The raced-NORMAL
  * branch after unlock is not forcible without a production-only seam; its routing is
  * covered by {@link #dispatchAcrossDrainCompletionIsNeverStranded}.
- */
  */
 class CbFallbackHandlerTest {
 
