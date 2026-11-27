@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # generate-rag-corpus-embeddings.sh — one-time operator tool (ADR-30).
 # Generates pre-computed OpenAI embeddings for the hand-authored RAG corpus.
-# Output is pasted into V3__seed_triage_rag_corpus.sql — NOT run automatically,
-# NOT part of mvn verify or CI (same class of tool as deploy/kafka/dlt-redrive.sh).
+# Output replaces the INSERT block in V3 only before V3 is first applied.
+# After application, do not edit V3; real embeddings require a new Flyway migration.
+# NOT run automatically, NOT part of mvn verify or CI (same class of tool as
+# deploy/kafka/dlt-redrive.sh).
 #
 # Usage:
 #   export $(grep SPRING_AI_OPENAI_API_KEY .env | xargs)

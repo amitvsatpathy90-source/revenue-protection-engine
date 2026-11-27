@@ -45,8 +45,9 @@ and non-2xx treated as failure. A webhook carries no `lat`/`lon`.
    windows use broker ingest time).
 8. The inbox records the server-side `received_at`. One active poller publishes pending rows to `payment.events`
    in `received_at` order per account and sets `received_at` as the Kafka record timestamp, so poller backlog does
-   not shift detection time. Requires `payment.events` to use `message.timestamp.type=CreateTime`. Publishing is
-   at-least-once; detection dedups on `eventId`.
+   not shift detection time. Requires `payment.events` to use `message.timestamp.type=CreateTime`. Rows newer than
+   `ingest.poller.settle-delay` (2s) are not published, so out-of-order commits cannot invert per-account order,
+   and a failed send stops the batch. Publishing is at-least-once; detection dedups on `eventId`.
 
 ## Alternatives Considered
 

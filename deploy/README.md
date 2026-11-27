@@ -85,7 +85,8 @@ metric may carry `account_id` or any PII / high-cardinality tag (per internal ob
   one-time operator tool (ADR-30). Generates OpenAI embeddings for the hand-authored RAG corpus.
   **Not needed on the v1 path:** retrieval is an exact `rule_name` lookup with no embedding call, and
   V3 (`rpe-triage-agent/src/main/resources/db/migration/V3__seed_triage_rag_corpus.sql`) seeds placeholder
-  vectors. V3 is checksum-immutable, so real vectors would need a new migration, not an edit to V3.
+  vectors, unused by the v1 keyed-lookup path. V3 can be edited to use generated vectors only before
+  it is applied to a persistent database; after application, real vectors require a new migration.
   Relevant only if a similarity path is enabled. **Not run
   automatically, not part of `mvn verify`/CI** — same class as `kafka/dlt-redrive.sh`.
   Requires `curl`, `jq`, a real `SPRING_AI_OPENAI_API_KEY`.

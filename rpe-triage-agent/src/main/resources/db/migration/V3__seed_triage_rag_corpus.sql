@@ -6,21 +6,22 @@
 -- checksum/version tracking, same as any other migration (V1/V2). Adding a new
 -- detector later means a new V4 INSERT-only migration, never editing this file.
 --
--- Embeddings are NOT pre-populated here — embedding generation happens at
--- retrieval-query time only (TriageService.fetchRagContext), not at corpus
--- ingestion.
-
--- Note: pgvector similarity search (<=>) requires pre-computed embeddings on corpus rows.
--- The INSERT statement below is populated by running:
+-- The INSERT below pre-populates placeholder embeddings. They are deterministic
+-- pseudo-random vectors, not semantic embeddings; similarity search against them
+-- returns arbitrary results.
+--
+-- v1 retrieval uses exact rule_name lookup (TriageService.fetchRagContext) and
+-- does not generate query embeddings or read the stored vectors. Real embeddings
+-- are needed only if a similarity-retrieval path is enabled (ADR-30).
+--
+-- To use real embeddings before V3 is first applied, run:
 --   ./deploy/scripts/generate-rag-corpus-embeddings.sh > corpus-insert.sql
--- and pasting the generated SQL payload into this file prior to deployment.
-
--- PLACEHOLDER EMBEDDINGS — deterministic pseudo-random, NOT semantically meaningful.
--- OpenAI key deliberately deferred (cost decision, not a technical blocker). Similarity
--- search against these vectors returns arbitrary results — this satisfies the NOT NULL
--- constraint and the pipeline's structural wiring (Flyway/mvn verify/RAG boundary tests)
--- only. Re-run deploy/scripts/generate-rag-corpus-embeddings.sh and replace this block
--- wholesale once a real SPRING_AI_OPENAI_API_KEY is available (ADR-30).
+-- and replace the INSERT block below with the generated INSERT. Once V3 has been
+-- applied to a persistent database, do not edit it; use a new Flyway migration.
+--
+-- PLACEHOLDER EMBEDDINGS — OpenAI key deliberately deferred (cost decision,
+-- not a technical blocker). These vectors satisfy the NOT NULL constraint and
+-- structural tests only; they do not validate similarity retrieval.
 SELECT setseed(0.42);
 
 INSERT INTO triage_rag_corpus (rule_name, content, embedding)
