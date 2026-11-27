@@ -1,11 +1,2 @@
-# Pinned patch version so image builds stay reproducible
-FROM postgres:16.3
-
-RUN apt-get update \
-    # Grab the exact pgvector .deb instead of letting apt resolve it
-    && apt-get download postgresql-16-pgvector=0.8.6-1.pgdg12+2 \
-    # Force flags skip dependency checks; only safe for this verified combo
-    && dpkg --force-breaks --force-depends -i postgresql-16-pgvector_*.deb \
-    # Cleanup in the same layer so the image stays small
-    && rm -f postgresql-16-pgvector_*.deb \
-    && rm -rf /var/lib/apt/lists/*
+# pgvector 0.8.7 image for PostgreSQL 16 on Bookworm; pinned by multi-platform index digest.
+FROM pgvector/pgvector@sha256:484e838076e04939d27d3e176e91c86eea96236126023be8d3059761122e579f

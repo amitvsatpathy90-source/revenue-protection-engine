@@ -89,12 +89,11 @@ services:
     build:
       context: ./deploy/postgres
       dockerfile: Dockerfile
-    # local tag, not pulled — avoids Docker Hub confusion with base image: postgres:16.3
-    image: rpe-postgres:16.3-pgvector
+    # Local tag for the repository-built PostgreSQL/pgvector image.
+    image: rpe-postgres:16.16-pgvector-0.8.7
     # Build/use the local image instead of resolving this application image from a registry.
     pull_policy: build
-    # Bypasses the postgresql-16-pgvector ABI conflict by safely disabling JIT at runtime.
-    # This ensures the incompatible JIT compiler code paths are never executed.
+    # Keep JIT disabled to preserve existing runtime behavior during the image replacement.
     command: [ "postgres", "-c", "jit=off" ]
     mem_limit: 256m
     environment:

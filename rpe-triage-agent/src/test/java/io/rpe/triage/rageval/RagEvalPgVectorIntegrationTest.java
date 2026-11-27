@@ -76,9 +76,10 @@ class RagEvalPgVectorIntegrationTest {
      * Isolated evaluation database, built from the project's PostgreSQL Dockerfile.
      * JIT is disabled to match the project's canonical database startup.
      */
+    @SuppressWarnings("resource") // Container lifecycle is managed by JUnit @Testcontainers / @Container
     @Container
     static final GenericContainer<?> POSTGRES = new GenericContainer<>(
-            new ImageFromDockerfile("rpe-postgres:16.3-pgvector", false)
+            new ImageFromDockerfile("rpe-postgres:16.16-pgvector-0.8.7", false)
                     .withFileFromPath(".", POSTGRES_BUILD_CONTEXT))
             .withEnv("POSTGRES_DB", "rpe")
             .withEnv("POSTGRES_USER", "rpe")

@@ -83,7 +83,7 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
-      # Build the triage Testcontainers image separately to expose Dockerfile and APT failures
+      # Build the triage Testcontainers image separately so image-build failures surface
       # before Maven reports them through the integration-test image-fetch exception.
       - name: Build pgvector integration-test image
         if: ${{ matrix.service == 'rpe-triage-agent' }}
@@ -91,7 +91,7 @@ jobs:
           docker build \
             --progress=plain \
             --no-cache \
-            --tag rpe-postgres:16.3-pgvector \
+            --tag rpe-postgres:16.16-pgvector-0.8.7 \
             --file deploy/postgres/Dockerfile \
             deploy/postgres
       - name: Verify

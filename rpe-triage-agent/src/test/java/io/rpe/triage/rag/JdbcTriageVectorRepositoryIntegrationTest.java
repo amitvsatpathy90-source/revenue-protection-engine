@@ -31,7 +31,7 @@ class JdbcTriageVectorRepositoryIntegrationTest {
     @Container
     @SuppressWarnings("resource")
     static final GenericContainer<?> POSTGRES = new GenericContainer<>(
-            new ImageFromDockerfile("rpe-postgres:16.3-pgvector", false)
+            new ImageFromDockerfile("rpe-postgres:16.16-pgvector-0.8.7", false)
                     .withFileFromPath(".", BUILD_CONTEXT))
             .withEnv("POSTGRES_DB", "rpe")
             .withEnv("POSTGRES_USER", "rpe")
