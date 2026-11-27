@@ -17,8 +17,10 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
@@ -41,13 +43,12 @@ import static org.mockito.Mockito.*;
  * open breaker, so the lazy default would never transition. That wiring is pinned
  * separately by RedisCircuitBreakerAutoTransitionTest.
  * <p>
- * INSPECTION-ONLY (finding #2, arch-audit 2026-07-16): the invariant "dispatch never holds
- * transitionLock across a lane submit" (the fix moved the raced-NORMAL submit OUTSIDE the lock)
- * has no automated test. Reaching that branch deterministically needs the state to flip to NORMAL
- * BETWEEN dispatch's two reads of the private volatile field — not forcible from a test without a
- * production-only seam whose surface area is not worth it. The routing correctness of that path is
- * covered by {@link #dispatchAcrossDrainCompletionIsNeverStranded}; the lock-hold itself is guarded
- * by review + the assertion in dispatch's own comment.
+ * Invariant "no lane submit while holding transitionLock" is enforced at runtime by
+ * {@code submitLaneTask} (throws ISE) and pinned by
+ * {@link #dispatchFailsFastWhenCurrentThreadHoldsTransitionLock}. The raced-NORMAL
+ * branch after unlock is not forcible without a production-only seam; its routing is
+ * covered by {@link #dispatchAcrossDrainCompletionIsNeverStranded}.
+ */
  */
 class CbFallbackHandlerTest {
 
@@ -116,6 +117,30 @@ class CbFallbackHandlerTest {
 
         assertThat(ran).isTrue();
         assertThat(handler.currentState()).isEqualTo(CbFallbackHandler.State.NORMAL);
+    }
+
+    /**
+     * Runtime guard: dispatch must fail fast, before touching any lane, when the caller
+     * holds transitionLock. A blocked lane submit under the lock would stall CB transitions.
+     */
+    @Test
+    void dispatchFailsFastWhenCurrentThreadHoldsTransitionLock() throws Exception {
+        var field = CbFallbackHandler.class.getDeclaredField("transitionLock");
+        field.setAccessible(true);
+        var transitionLock = (ReentrantLock) field.get(handler);
+
+        transitionLock.lock();
+        try {
+            // State is NORMAL, so dispatch takes the fast path straight into the guard
+            assertThatThrownBy(() -> handler.dispatch("a1", () -> {
+            }))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("transitionLock");
+        } finally {
+            transitionLock.unlock();
+        }
+
+        verifyNoInteractions(lanes); // guard must fire before getOrCreate
     }
 
     @Test
